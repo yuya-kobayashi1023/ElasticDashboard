@@ -1,5 +1,5 @@
 import { datePart, evaluateFormula, FormulaError, lookupKeys, masterIndex, rowKeys } from "./derive";
-import { cellToString, parseDate, parseNumber } from "./infer";
+import { cellToString, parseDateValue, parseNumber } from "./infer";
 import type { ColumnMeta, ColumnType, ColumnValues, Frame, Lookup, RawTable } from "./types";
 
 /** Rows processed between yields when building a frame without blocking the page. */
@@ -18,7 +18,7 @@ function* coerceSteps(raw: RawTable, index: number, type: ColumnType): Steps<Col
   const n = raw.rows.length;
   if (type === "number" || type === "date") {
     const values = new Float64Array(n);
-    const fn = type === "number" ? parseNumber : parseDate;
+    const fn = type === "number" ? parseNumber : parseDateValue;
     for (let i = 0; i < n; i++) {
       if (i && i % CHUNK === 0) yield;
       values[i] = fn(raw.rows[i][index] ?? null);

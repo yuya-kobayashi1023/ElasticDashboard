@@ -273,18 +273,20 @@ describe("column types across data updates", () => {
   const base = { headers: ["year", "co2"], rows: years(1750, 1999) };
   const later = { headers: ["year", "co2"], rows: years(2000, 2023) };
   const d = createDashboard(base, { fileName: "a.csv", sheetName: null, importedAt: 0 }, "a");
-  it("keeps a numeric year after appending rows whose years alone would look categorical", () => {
-    expect(d.columns.find((c) => c.key === "year")!.type).toBe("number");
+  it("keeps the column type after appending rows", () => {
+    expect(d.columns.find((c) => c.key === "year")!.type).toBe("date");
+    expect(d.columns.find((c) => c.key === "co2")!.type).toBe("number");
     const merged = appendRows(base, later);
     const { columns, report } = mergeColumns(d.columns, merged, base.headers, createDashboard(later, { fileName: "b", sheetName: null, importedAt: 0 }, "b").columns);
-    expect(columns.find((c) => c.key === "year")!.type).toBe("number");
+    expect(columns.find((c) => c.key === "year")!.type).toBe("date");
+    expect(columns.find((c) => c.key === "co2")!.type).toBe("number");
     expect(report.retyped).toEqual([]);
   });
   it("re-types and reports when the new values no longer fit", () => {
     const text = { headers: ["year", "co2"], rows: Array.from({ length: 30 }, (_, i) => [`第${i}期`, "1"]) };
     const { columns, report } = mergeColumns(d.columns, text, base.headers);
-    expect(columns.find((c) => c.key === "year")!.type).not.toBe("number");
-    expect(report.retyped[0]).toMatchObject({ label: "year", from: "number" });
+    expect(columns.find((c) => c.key === "year")!.type).not.toBe("date");
+    expect(report.retyped[0]).toMatchObject({ label: "year", from: "date" });
   });
   it("never changes a type the user chose", () => {
     const chosen = d.columns.map((c) => (c.key === "co2" ? { ...c, type: "category" as const } : c));

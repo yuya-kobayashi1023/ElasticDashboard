@@ -104,7 +104,7 @@ export function measureLabel(m: Measure, meta: Map<string, ColumnMeta> | ColumnM
 export function formatMeasure(v: number, m: Measure, meta: Map<string, ColumnMeta>, style: "full" | "compact" = "full"): string {
   if (m.agg === "count" || m.agg === "distinct" || !m.column) return formatNumber(v, null, style);
   const col = meta.get(m.column);
-  if (col?.type === "date") return formatDate(v, "day");
+  if (col?.type === "date") return formatDate(v, col.dateUnit === "year" ? "year" : "day");
   if (m.agg === "avg" && col && col.format.decimals === 0) {
     return formatNumber(v, { ...col, format: { ...col.format, decimals: null } }, style);
   }

@@ -1,5 +1,5 @@
 import { buildFrame } from "./frame";
-import { cellToString, inferColumns, parseDate, parseNumber, prefersAverage } from "./infer";
+import { cellToString, inferColumns, parseDateValue, parseNumber, prefersAverage } from "./infer";
 import { newId } from "./id";
 import type { ColumnMeta, ColumnType, Dashboard, DataSource, Filter, Frame, Measure, RawTable, Widget, WidgetKind } from "./types";
 
@@ -27,18 +27,40 @@ export interface ColumnRoles {
 
 export function columnRoles(columns: ColumnMeta[], frame: Frame): ColumnRoles {
   const usable = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
+  // A column with a single value (an export timestamp, a fixed flag) carries no information.
   const measures = usable
-    .filter((c) => c.type === "number" && !c.idLike)
+    .filter((c) => c.type === "number" && !c.idLike && distinctCount(frame, c.key) >= 2)
     .sort((a, b) => measureRank(b) - measureRank(a));
   const dimensions = usable
     .filter((c) => c.type === "category")
-    .map((c) => ({ c, d: distinctCount(frame, c.key) }))
+    .map((c) => ({ c, d: distinctCount(frame, c.key), digits: numericLooking(frame, c.key) }))
     .filter(({ d }) => d >= 2)
-    // Code-like categories (store codes etc.) are still useful groupings, but rank after named ones.
-    .sort((a, b) => Number(a.c.idLike) - Number(b.c.idLike) || Math.abs(Math.log(a.d / 6)) - Math.abs(Math.log(b.d / 6)))
+    .sort(
+      (a, b) =>
+        // Code-like categories (store codes etc.) are still useful groupings, but rank after named ones.
+        Number(a.c.idLike) - Number(b.c.idLike) ||
+        // Up to 60 groups (e.g. prefectures) all read fine in a top-10 bar chart; beyond that, fewer is better.
+        Math.max(0, Math.log(a.d / 60)) - Math.max(0, Math.log(b.d / 60)) ||
+        // Named values (都道府県) before digit labels (月, 日) — the sort is stable, so ties keep column order.
+        Number(a.digits) - Number(b.digits),
+    )
     .map(({ c }) => c);
   const dates = usable.filter((c) => c.type === "date" && distinctCount(frame, c.key) >= 2);
   return { measures, dimensions, dates };
+}
+
+/** Category columns whose values are all numbers (split dates, codes). */
+function numericLooking(frame: Frame, key: string): boolean {
+  const col = frame.columns.get(key);
+  if (!col || (col.type !== "category" && col.type !== "text")) return false;
+  let seen = 0;
+  for (let i = 0; i < col.values.length && seen < 200; i++) {
+    const v = col.values[i];
+    if (v === null) continue;
+    seen++;
+    if (!/^\d+$/.test(v)) return false;
+  }
+  return seen > 0;
 }
 
 function measureFor(col: ColumnMeta | undefined): Measure {
@@ -58,8 +80,12 @@ export function autoWidgets(columns: ColumnMeta[], frame: Frame): Widget[] {
   while (widgets.length < 4 && kpiExtras.length) widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: kpiExtras.shift()! });
   if (widgets.length === 1 || widgets.length === 2) for (const w of widgets) w.span = widgets.length === 1 ? 4 : 2;
 
-  // Charts lead with an amount or quantity; without one, counting rows reads more naturally than averaging.
-  const primary = measures[0] && measureRank(measures[0]) > 0 ? measureFor(measures[0]) : ({ agg: "count", column: null } as Measure);
+  // Charts lead with an amount or quantity, else the first column worth totalling (daily case counts…).
+  // Without one, counting rows reads more naturally than averaging measurements.
+  // When most numbers are measurements (temperatures, lengths), an unlabeled one likely is too.
+  const mostlyMeasurements = measures.filter(prefersAverage).length >= measures.length / 2;
+  const lead = measures.find((m) => measureRank(m) > 0) ?? (mostlyMeasurements ? undefined : measures.find((m) => !prefersAverage(m)));
+  const primary = lead ? measureFor(lead) : ({ agg: "count", column: null } as Measure);
   if (dates[0]) {
     widgets.push({
       id: newId(),
@@ -91,7 +117,7 @@ export function autoFilters(columns: ColumnMeta[], frame: Frame): Filter[] {
   const { dimensions, dates } = columnRoles(columns, frame);
   const filters: Filter[] = [];
   if (dates[0]) filters.push({ id: newId(), column: dates[0].key, kind: "range", min: null, max: null });
-  for (const d of dimensions.filter((c) => distinctCount(frame, c.key) <= 50).slice(0, 2)) {
+  for (const d of dimensions.filter((c) => distinctCount(frame, c.key) <= 100).slice(0, 2)) {
     filters.push({ id: newId(), column: d.key, kind: "values", values: [] });
   }
   return filters;
@@ -163,7 +189,7 @@ export interface ReplaceReport {
 /** Whether ≥95% of the column's non-blank values convert to `type` (sampled for large data). */
 function fitsType(type: ColumnType, raw: RawTable, index: number): boolean {
   if (type === "category" || type === "text") return true;
-  const fn = type === "number" ? parseNumber : parseDate;
+  const fn = type === "number" ? parseNumber : parseDateValue;
   const step = Math.max(1, Math.floor(raw.rows.length / 3000));
   let seen = 0;
   let ok = 0;
@@ -201,7 +227,7 @@ export function mergeColumns(
     if (fitsType(prev.type, raw, i)) return prev;
     const next = infer(h, i);
     if (next.type !== prev.type) retyped.push({ label: prev.label, from: prev.type, to: next.type });
-    return { ...prev, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format };
+    return { ...prev, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format, dateUnit: next.dateUnit };
   });
   const present = new Set(raw.headers);
   const derived = existing.filter((c) => c.derived);

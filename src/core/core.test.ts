@@ -54,8 +54,24 @@ describe("inferColumn", () => {
     const r = inferColumn("注文ID", ids);
     expect(r.idLike).toBe(true);
   });
-  it("treats year numbers as category", () => {
-    expect(inferColumn("年度", [2023, 2024, 2023, 2025]).type).toBe("category");
+  it("treats year numbers as yearly dates", () => {
+    expect(inferColumn("年度", [2023, 2024, 2023, 2025])).toMatchObject({ type: "date", dateUnit: "year" });
+    expect(inferColumn("year", Array.from({ length: 300 }, (_, i) => 1750 + (i % 274)))).toMatchObject({ type: "date", dateUnit: "year" });
+  });
+  it("treats unique fixed-width numbers as codes", () => {
+    const codes = Array.from({ length: 60 }, (_, i) => 11001 + i * 37);
+    expect(inferColumn("列1", codes).idLike).toBe(true);
+    const amounts = Array.from({ length: 60 }, (_, i) => 1200 + i * 937);
+    expect(inferColumn("列2", amounts).idLike).toBe(false);
+  });
+    it("treats NA and similar markers as blank", () => {
+    expect(inferColumn("bill_length_mm", ["39.1", "NA", "40.3", "36.7"]).type).toBe("number");
+    expect(parseNumber("NA")).toBeNaN();
+  });
+  it("treats split timestamp parts as labels, but keeps minute durations as numbers", () => {
+    expect(inferColumn("現在時刻(月)", [10, 10, 10, 10]).type).toBe("category");
+    expect(inferColumn("初回応答(分)", [12, 30, 8, 45]).type).toBe("number");
+    expect(inferColumn("品質情報", [8, 8, 5, 8]).idLike).toBe(true);
   });
   it("detects dates", () => {
     expect(inferColumn("日付", ["2025/01/01", "2025/01/02", null]).type).toBe("date");

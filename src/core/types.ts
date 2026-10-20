@@ -49,6 +49,8 @@ export interface ColumnMeta {
   derived?: Derivation;
   /** Explicit value order for categories (weekdays, months). */
   order?: string[];
+  /** Date columns holding only a year (e.g. "1750") display and convert as years. */
+  dateUnit?: "year";
 }
 
 export type Agg = "count" | "sum" | "avg" | "min" | "max" | "distinct";

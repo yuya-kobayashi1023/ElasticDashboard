@@ -102,7 +102,7 @@ function summary(f: Filter, meta: ColumnMeta | undefined): string {
   }
   if (f.preset) return DATE_PRESETS.find((p) => p.id === f.preset)?.label ?? "すべて";
   if (f.min === null && f.max === null) return "すべて";
-  const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, "day") : formatNumber(v, meta));
+  const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, meta.dateUnit === "year" ? "year" : "day") : formatNumber(v, meta));
   if (f.min !== null && f.max !== null) return `${fmt(f.min)} 〜 ${fmt(f.max)}`;
   return f.min !== null ? `${fmt(f.min)} 以降` : `${fmt(f.max!)} まで`;
 }

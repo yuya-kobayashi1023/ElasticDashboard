@@ -33,7 +33,7 @@ const isEmpty = (c: RawCell) => c === null || (typeof c === "string" && c.trim()
 const isTyped = (c: RawCell) => typeof c === "number" || (c !== null && (!Number.isNaN(parseNumber(c)) || !Number.isNaN(parseDate(c))));
 const isYear = (c: RawCell) => {
   const n = typeof c === "number" ? c : parseNumber(c);
-  return Number.isInteger(n) && n >= 1900 && n <= 2100;
+  return Number.isInteger(n) && n >= 1000 && n <= 2100;
 };
 
 /**
@@ -50,7 +50,8 @@ function firstRowIsData(first: RawCell[], body: RawCell[][], width: number): boo
     if (vals.length < 3 || vals.filter(isTyped).length / vals.length < 0.9) continue;
     const h = first[c] ?? null;
     if (isEmpty(h)) continue;
-    if (isTyped(h) && !(isYear(h) && !vals.every(isYear))) data++;
+    // A year over a column of years is data (e.g. "year of record"); over other numbers it is a header.
+    if (isTyped(h) && !(isYear(h) && vals.filter(isYear).length / vals.length < 0.5)) data++;
     else header++;
   }
   return data > 0 && header === 0;
