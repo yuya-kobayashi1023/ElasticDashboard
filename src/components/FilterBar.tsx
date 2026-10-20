@@ -128,7 +128,7 @@ function FilterChip({ filter, frame, filters, open, setOpen, onChange, onRemove 
       label={`${name}で絞り込み`}
       trigger={
         <span className={`filter-chip${active ? " is-active" : ""}`}>
-          <button type="button" className="filter-chip-main" onClick={() => setOpen(!open)} aria-expanded={open}>
+          <button type="button" className="filter-chip-main" onClick={() => setOpen(!open)} aria-expanded={open} title={`${name}: ${summary(filter, meta)}`}>
             <span className="chip-name">{name}</span>
             <span className="chip-value">{summary(filter, meta)}</span>
             <CaretDownIcon size={12} aria-hidden />

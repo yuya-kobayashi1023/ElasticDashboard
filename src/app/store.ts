@@ -43,6 +43,15 @@ interface State {
 }
 
 const LAST_KEY = "elastic-dashboard:last";
+
+/** "売上" → "売上 (2)" when a dashboard with that name already exists, so the sidebar can tell them apart. */
+export function uniqueName(name: string, list: { name: string }[]): string {
+  const taken = new Set(list.map((d) => d.name));
+  if (!taken.has(name)) return name;
+  let n = 2;
+  while (taken.has(`${name} (${n})`)) n++;
+  return `${name} (${n})`;
+}
 const HISTORY_LIMIT = 100;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let lastCoalesce: { key: string; at: number } | null = null;
@@ -128,7 +137,7 @@ export const useApp = create<State>((set, get) => {
     },
 
     async create(raw, source, name, prepared) {
-      const dashboard = createDashboard(raw, source, name, { prepared });
+      const dashboard = createDashboard(raw, source, uniqueName(name, get().list), { prepared });
       await storage.saveRaw(dashboard.id, raw);
       const list = await storage.saveDashboard(dashboard);
       remember(dashboard.id);
@@ -197,6 +206,7 @@ export const useApp = create<State>((set, get) => {
       const now = Date.now();
       const dashboard: Dashboard = {
         ...structuredClone(config),
+        name: uniqueName(config.name, get().list),
         id: newId(),
         createdAt: now,
         updatedAt: now,

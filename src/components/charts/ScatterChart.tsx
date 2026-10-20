@@ -30,8 +30,9 @@ export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel,
     if (p.y < y0) y0 = p.y;
     if (p.y > y1) y1 = p.y;
   }
-  const xt = niceTicks(Math.min(0, x0), x1, 5);
-  const yt = niceTicks(Math.min(0, y0), y1, 5);
+  // Axes follow the data range: a scatter plot compares positions, not lengths from zero.
+  const xt = niceTicks(x0, x1, 5);
+  const yt = niceTicks(y0, y1, 5);
   const left = Math.max(...yt.map((t) => textWidth(formatY(t), fs))) + 12;
   const innerW = Math.max(10, width - left - M.right);
   const plotH = height - M.top - M.bottom;

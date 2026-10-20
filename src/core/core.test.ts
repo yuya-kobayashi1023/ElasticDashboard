@@ -191,3 +191,11 @@ describe("measure priority", () => {
     expect(time && time.kind === "time" && time.measure.column).toBe("売上金額");
   });
 });
+
+describe("dashboard names", () => {
+  it("numbers duplicates", async () => {
+    const { uniqueName } = await import("../app/store");
+    expect(uniqueName("売上", [])).toBe("売上");
+    expect(uniqueName("売上", [{ name: "売上" }, { name: "売上 (2)" }])).toBe("売上 (3)");
+  });
+});
