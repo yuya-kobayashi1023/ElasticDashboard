@@ -242,6 +242,14 @@ function Viewer({ initial }: { initial: ExportPayload }) {
 function Dashboard_({ dashboard, raw, filters, setFilters }: { dashboard: Dashboard; raw: RawTable; filters: Filter[]; setFilters: React.Dispatch<React.SetStateAction<Filter[]>> }) {
   const { frame, rows } = useDashboardData(raw, dashboard.columns, filters, dashboard.lookups);
   const onToggle = useCallback((column: string, value: string) => setFilters((f) => toggleFilterValue(f, column, value)), [setFilters]);
+  if (!frame) {
+    return (
+      <div className="busy-banner" role="status">
+        <span className="spinner" aria-hidden />
+        {raw.rows.length.toLocaleString("ja-JP")} 行を集計しています…
+      </div>
+    );
+  }
   return (
     <>
       <FilterBar frame={frame} filters={filters} filteredCount={rows.length} onChange={setFilters} />

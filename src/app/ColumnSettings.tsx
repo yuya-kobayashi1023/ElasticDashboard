@@ -1,12 +1,12 @@
 import { ArrowCounterClockwiseIcon, CalculatorIcon, TreeStructureIcon, EyeIcon, EyeSlashIcon, MagicWandIcon, PencilSimpleIcon, TrashIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
-import { describeDerived } from "../core/derive";
+import { describeDerived, lookupKeys } from "../core/derive";
 import { DerivedDialog } from "./DerivedDialog";
 import { LookupDialog } from "./LookupDialog";
 import { autoFilters, autoWidgets } from "../core/autoDashboard";
 import { buildFrame, columnStats } from "../core/frame";
-import { formatNumber, TYPE_LABEL } from "../core/format";
-import type { ColumnMeta, ColumnType, NumberFormat, RawTable } from "../core/types";
+import { columnLabel, formatNumber, TYPE_LABEL } from "../core/format";
+import type { ColumnMeta, ColumnType, Lookup, NumberFormat, RawTable } from "../core/types";
 import { TypeIcon } from "../components/TypeIcon";
 import { useApp, useToasts } from "./store";
 
@@ -50,6 +50,24 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
   );
   const [derivedOpen, setDerivedOpen] = useState(false);
   const [lookupOpen, setLookupOpen] = useState(false);
+  const [editingLookup, setEditingLookup] = useState<Lookup | null>(null);
+  const openLookup = (l: Lookup | null) => {
+    setEditingLookup(l);
+    setLookupOpen(true);
+  };
+  const unjoin = (l: Lookup) => {
+    const removed = dashboard.columns.filter((c) => c.derived?.kind === "lookup" && c.derived.lookupId === l.id);
+    update((d) => ({
+      ...d,
+      lookups: d.lookups?.filter((x) => x.id !== l.id),
+      columns: d.columns.filter((c) => !(c.derived?.kind === "lookup" && c.derived.lookupId === l.id)),
+    }));
+    useToasts.getState().push({
+      tone: "info",
+      message: `「${l.fileName}」の結合を解除しました（${removed.map((c) => c.label).join("、")} を削除）`,
+      action: { label: "元に戻す", run: () => useApp.getState().undo() },
+    });
+  };
   const [editingDerived, setEditingDerived] = useState<ColumnMeta | null>(null);
   const openDerived = (c: ColumnMeta | null) => {
     setEditingDerived(c);
@@ -93,7 +111,7 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
             <CalculatorIcon size={16} aria-hidden />
             計算列を追加
           </button>
-          <button type="button" className="btn btn-sm" onClick={() => setLookupOpen(true)}>
+          <button type="button" className="btn btn-sm" onClick={() => openLookup(null)}>
             <TreeStructureIcon size={16} aria-hidden />
             マスタを結合
           </button>
@@ -103,6 +121,37 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
           </button>
         </div>
       </div>
+
+      {!!dashboard.lookups?.length && (
+        <section className="lookup-list" aria-label="結合したマスタ">
+          <h3 className="lookup-list-title">結合したマスタ</h3>
+          <ul>
+            {dashboard.lookups.map((l) => {
+              const cols = dashboard.columns.filter((c) => c.derived?.kind === "lookup" && c.derived.lookupId === l.id);
+              return (
+                <li key={l.id}>
+                  <TreeStructureIcon size={18} aria-hidden className="muted" />
+                  <span className="lookup-name">{l.fileName}</span>
+                  <span className="muted lookup-meta">
+                    {lookupKeys(l)
+                      .local.map((k) => columnLabel(dashboard.columns, k))
+                      .join(" + ")}
+                    で結合 ・ {cols.map((c) => c.label).join("、")}
+                  </span>
+                  <span className="lookup-actions">
+                    <button type="button" className="btn btn-sm" onClick={() => openLookup(l)}>
+                      更新
+                    </button>
+                    <button type="button" className="btn btn-sm btn-ghost danger-text" onClick={() => unjoin(l)}>
+                      結合を解除
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       <div className="table-wrap col-table-wrap">
         <table className="data-table col-table">
@@ -288,7 +337,7 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
         </table>
       </div>
       <DerivedDialog open={derivedOpen} editing={editingDerived} raw={raw} onClose={() => setDerivedOpen(false)} />
-      <LookupDialog open={lookupOpen} raw={raw} onClose={() => setLookupOpen(false)} />
+      <LookupDialog open={lookupOpen} raw={raw} editing={editingLookup} onClose={() => setLookupOpen(false)} />
     </div>
   );
 }

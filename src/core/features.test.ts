@@ -202,7 +202,7 @@ describe("master lookups", () => {
   });
   it("adds master columns by key and leaves unmatched rows blank", async () => {
     const data = { headers: ["店舗コード", "売上"], rows: [["001", 100], ["002", 50], ["009", 10]] };
-    const lookup = { id: "m", fileName: "店舗.csv", table: { headers: ["店舗コード", "店舗名", "面積"], rows: [[1, "新宿", "120"], [2, "梅田", "80"]] }, masterKey: "店舗コード", localKey: "店舗コード" };
+    const lookup = { id: "m", fileName: "店舗.csv", table: { headers: ["店舗コード", "店舗名", "面積"], rows: [[1, "新宿", "120"], [2, "梅田", "80"]] }, masterKeys: ["店舗コード"], localKeys: ["店舗コード"] };
     const cols: ColumnMeta[] = [
       { ...calc("店舗コード", "店舗コード", undefined, "category") },
       { ...calc("売上", "売上", undefined, "number") },
@@ -233,5 +233,36 @@ describe("compressed export", () => {
     const { gunzipBase64 } = await import("./gzip");
     const app = /id="ed-app-gz">([^<]*)</.exec(packed)![1];
     expect((await gunzipBase64(app)).endsWith("<\\/script>")).toBe(true);
+  });
+});
+
+describe("composite and legacy lookup keys", () => {
+  const cols = (extra: ColumnMeta[]): ColumnMeta[] => [
+    calc("店舗", "店舗", undefined, "category"),
+    calc("月", "月", undefined, "category"),
+    calc("売上", "売上", undefined, "number"),
+    ...extra,
+  ];
+  const data = { headers: ["店舗", "月", "売上"], rows: [["S1", "10", 100], ["S1", "11", 120], ["S2", "10", 80], ["S2", null, 5]] };
+  const target = { headers: ["店舗", "月", "目標"], rows: [["S1", "10", 90], ["S1", "11", 130], ["S2", "10", 70]] };
+  it("matches on several columns", () => {
+    const l = { id: "t", fileName: "目標.csv", table: target, masterKeys: ["店舗", "月"], localKeys: ["店舗", "月"] };
+    const frame = buildFrame(data, cols([calc("lookup:t:目標", "目標", { kind: "lookup", lookupId: "t", column: "目標" }, "number")]), [l]);
+    expect(Array.from(frame.columns.get("lookup:t:目標")!.values as Float64Array)).toEqual([90, 130, 70, NaN]);
+  });
+  it("still reads single-key lookups saved by older versions", () => {
+    const legacy = { id: "t", fileName: "目標.csv", table: target, masterKey: "店舗", localKey: "店舗" } as unknown as import("./types").Lookup;
+    const frame = buildFrame(data, cols([calc("lookup:t:目標", "目標", { kind: "lookup", lookupId: "t", column: "目標" }, "number")]), [legacy]);
+    expect(Array.from(frame.columns.get("lookup:t:目標")!.values as Float64Array)).toEqual([90, 90, 70, 70]);
+  });
+});
+
+describe("date keys", () => {
+  it("matches dates written differently", () => {
+    const data = { headers: ["日付", "件数"], rows: [["2025/10/01", 3], ["2025-10-02", 4]] };
+    const master = { headers: ["日付", "天気"], rows: [["2025-10-01", "晴れ"], ["20251002", "雨"]] };
+    const l = { id: "w", fileName: "天気.csv", table: master, masterKeys: ["日付"], localKeys: ["日付"] };
+    const cols: ColumnMeta[] = [calc("日付", "日付", undefined, "date"), calc("件数", "件数", undefined, "number"), calc("lookup:w:天気", "天気", { kind: "lookup", lookupId: "w", column: "天気" }, "category")];
+    expect(buildFrame(data, cols, [l]).columns.get("lookup:w:天気")!.values).toEqual(["晴れ", "雨"]);
   });
 });

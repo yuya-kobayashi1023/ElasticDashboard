@@ -26,10 +26,13 @@ export interface Lookup {
   id: string;
   fileName: string;
   table: RawTable;
-  /** Key column in the master table */
-  masterKey: string;
-  /** Key column in the dashboard data */
-  localKey: string;
+  /** Key columns in the master table; several columns form a composite key (e.g. 店舗コード + 月). */
+  masterKeys: string[];
+  /** Matching key columns in the dashboard data, same order as masterKeys. */
+  localKeys: string[];
+  /** Saved before composite keys existed. */
+  masterKey?: string;
+  localKey?: string;
 }
 
 export interface ColumnMeta {
