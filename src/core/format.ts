@@ -124,6 +124,10 @@ export function widgetTitle(w: Widget, meta: Map<string, ColumnMeta> | ColumnMet
     case "bar":
       return `${byLabel(columnLabel(meta, w.dimension))}${measureLabel(w.measure, meta)}`;
     case "time": {
+      if (w.series?.length) {
+        const names = w.series.map((k) => columnLabel(meta, k));
+        return `${names.length <= 3 ? names.join("・") : `${names.slice(0, 2).join("・")} ほか${names.length - 2}列`}の推移`;
+      }
       const base = `${measureLabel(w.measure, meta)}の推移`;
       return w.split ? `${byLabel(columnLabel(meta, w.split))}${base}` : base;
     }

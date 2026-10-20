@@ -1,6 +1,6 @@
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
-import { aggregate, comparePeriods, filterRows, groupBy, histogram, measureIsValid, pivot, scatterPoints, timeSeries } from "../core/aggregate";
+import { aggregate, comparePeriods, filterRows, groupBy, histogram, measureIsValid, pivot, scatterPoints, timeSeries, timeSeriesColumns } from "../core/aggregate";
 import { columnLabel, formatMeasure, formatNumber } from "../core/format";
 import type { Filter, Frame, Widget } from "../core/types";
 import { BarChart } from "./charts/BarChart";
@@ -47,6 +47,11 @@ export function widgetProblem(w: Widget, frame: Frame): string | null {
       if (!w.dateColumn) return "日付の列がありません";
       if (missing(w.dateColumn)) return missing(w.dateColumn);
       if (frame.columns.get(w.dateColumn)!.type !== "date") return "日付の列を選んでください";
+      if (w.series?.length) {
+        const bad = w.series.map(missing).find(Boolean);
+        if (bad) return bad;
+        return w.series.every(isNumber) ? null : "並べる列には数値の列を選んでください";
+      }
       return missing(w.split) ?? missing(w.measure.column) ?? (measureIsValid(frame, w.measure) ? null : "集計方法が列の種類に合っていません");
     case "histogram":
       if (!w.column) return "数値の列がありません";
@@ -105,15 +110,17 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         );
       }
       case "time": {
-        const data = timeSeries(frame, rows, w.dateColumn, w.bucket, w.measure, w.split);
+        const data = w.series?.length
+          ? timeSeriesColumns(frame, rows, w.dateColumn, w.bucket, w.measure.agg, w.series, (k) => columnLabel(frame.meta, k))
+          : timeSeries(frame, rows, w.dateColumn, w.bucket, w.measure, w.split);
         if (data.buckets.length === 0) return <Empty />;
         return (
           <TimeChart
             data={data}
             mark={w.mark}
             stackable={additive(w.measure)}
-            format={fmt(w.measure)}
-            formatAxis={fmtAxis(w.measure)}
+            format={fmt(w.series?.length ? { agg: w.measure.agg === "count" ? "sum" : w.measure.agg, column: w.series[0] } : w.measure)}
+            formatAxis={fmtAxis(w.series?.length ? { agg: w.measure.agg === "count" ? "sum" : w.measure.agg, column: w.series[0] } : w.measure)}
             color={color}
           />
         );

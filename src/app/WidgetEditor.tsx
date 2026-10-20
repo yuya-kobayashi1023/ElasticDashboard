@@ -162,9 +162,20 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
               </div>
               <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
               <label className="field">
-                <span className="field-label">系列に分ける列</span>
-                <select className="select" value={widget.split ?? ""} onChange={(e) => set({ split: e.target.value || null })}>
+                <span className="field-label">系列</span>
+                <select
+                  className="select"
+                  value={widget.series?.length ? SERIES_COLUMNS : (widget.split ?? "")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === SERIES_COLUMNS) {
+                      const first = widget.measure.column ?? columns.find((c) => c.type === "number")?.key;
+                      set({ split: null, series: first ? [first] : [] });
+                    } else set({ split: v || null, series: null });
+                  }}
+                >
                   <option value="">分けない</option>
+                  <option value={SERIES_COLUMNS}>複数の数値列を並べる</option>
                   {columns
                     .filter((c) => c.type === "category")
                     .map((c) => (
@@ -175,6 +186,30 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
                 </select>
                 {widget.split && <span className="field-hint">上位 7 系列を表示し、残りは「その他」にまとめます</span>}
               </label>
+              {!!widget.series && (
+                <fieldset className="field fieldset">
+                  <legend className="field-label">並べる列（最大 8 列）</legend>
+                  <div className="check-list">
+                    {columns
+                      .filter((c) => c.type === "number")
+                      .map((c) => {
+                        const on = widget.series!.includes(c.key);
+                        return (
+                          <label key={c.key} className="checkbox">
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              disabled={!on && widget.series!.length >= 8}
+                              onChange={() => set({ series: on ? widget.series!.filter((k) => k !== c.key) : [...widget.series!, c.key] })}
+                            />
+                            {c.label}
+                          </label>
+                        );
+                      })}
+                  </div>
+                  <span className="field-hint">集計方法は上の設定を使います。色で見分けられるのは 8 列までです</span>
+                </fieldset>
+              )}
               <div className="field">
                 <span className="field-label" id="mark-label">
                   表示
@@ -340,9 +375,11 @@ function TableFields({ widget, columns, onChange }: { widget: Extract<Widget, { 
 }
 
 /** Widgets drawn in a single color (multi-series charts take colors from the palette order). */
+const SERIES_COLUMNS = "__series_columns";
+
 function usesColor(w: Widget): boolean {
   if (w.kind === "bar" || w.kind === "histogram" || w.kind === "pivot") return true;
-  if (w.kind === "time") return !w.split;
+  if (w.kind === "time") return !w.split && !w.series?.length;
   if (w.kind === "scatter") return !w.colorBy;
   if (w.kind === "kpi") return !!w.compare;
   return false;

@@ -25,6 +25,7 @@ export function usedColumns(d: Dashboard): Set<string> {
         used.add(w.dateColumn);
         if (w.split) used.add(w.split);
         if (w.measure.column) used.add(w.measure.column);
+        for (const k of w.series ?? []) used.add(k);
         break;
       case "histogram":
         used.add(w.column);

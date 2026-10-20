@@ -326,3 +326,14 @@ describe("dates from split columns", () => {
     expect(Number.isNaN(v[1])).toBe(true);
   });
 });
+
+describe("wide tables", () => {
+  it("draws one series per numeric column", async () => {
+    const { timeSeriesColumns } = await import("./aggregate");
+    const data = { headers: ["Date", "Tokyo", "Osaka"], rows: [["2025-01-01", 10, 4], ["2025-01-02", 12, 5], ["2025-02-01", 7, 3]] };
+    const cols: ColumnMeta[] = [calc("Date", "Date", undefined, "date"), calc("Tokyo", "Tokyo", undefined, "number"), calc("Osaka", "Osaka", undefined, "number")];
+    const frame = buildFrame(data, cols);
+    const r = timeSeriesColumns(frame, filterRows(frame, []), "Date", "month", "sum", ["Tokyo", "Osaka"], (k) => k);
+    expect(r.series.map((x) => [x.label, x.values])).toEqual([["Tokyo", [22, 7]], ["Osaka", [9, 3]]]);
+  });
+});

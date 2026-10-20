@@ -517,3 +517,23 @@ export function comparePeriods(frame: Frame, rows: Uint32Array, measure: Measure
     partial: floorDate(maxDate, "day") < lastDayOfBucket,
   };
 }
+
+/** One series per numeric column, all on the same buckets (wide tables). */
+export function timeSeriesColumns(
+  frame: Frame,
+  rows: Uint32Array,
+  dateKey: string,
+  bucket: TimeBucket,
+  agg: Agg,
+  columns: string[],
+  label: (key: string) => string,
+): TimeSeriesResult {
+  let result: TimeSeriesResult = { bucket: "day", buckets: [], series: [] };
+  for (const key of columns.slice(0, MAX_SERIES + 1)) {
+    const r = timeSeries(frame, rows, dateKey, bucket, { agg: agg === "count" ? "sum" : agg, column: key }, null);
+    if (r.series.length === 0) continue;
+    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [] };
+    result.series.push({ label: label(key), values: r.series[0].values });
+  }
+  return result;
+}

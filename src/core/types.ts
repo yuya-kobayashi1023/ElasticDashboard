@@ -116,6 +116,8 @@ export interface TimeWidget extends WidgetBase {
   bucket: TimeBucket;
   measure: Measure;
   split: string | null;
+  /** Several numeric columns side by side (wide data such as one column per prefecture). Overrides split. */
+  series?: string[] | null;
   mark: "line" | "column";
 }
 
