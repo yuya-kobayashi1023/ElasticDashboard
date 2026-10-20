@@ -19,7 +19,17 @@ export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | 
 export type Derivation =
   | { kind: "formula"; /** Column references are stored as [key] */ expr: string }
   | { kind: "datepart"; source: string; part: DatePart }
-  | { kind: "lookup"; lookupId: string; /** Column header in the master table */ column: string };
+  | { kind: "lookup"; lookupId: string; /** Column header in the master table */ column: string }
+  | { kind: "datecompose"; parts: DateParts };
+
+/** Columns holding the pieces of a timestamp that is split across columns (null = not used). */
+export interface DateParts {
+  year: string;
+  month: string | null;
+  day: string | null;
+  hour: string | null;
+  minute: string | null;
+}
 
 /** A master table joined by key (e.g. store code → store name). Kept with the dashboard so it survives data replacement. */
 export interface Lookup {

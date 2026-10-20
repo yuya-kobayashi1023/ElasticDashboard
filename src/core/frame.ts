@@ -1,4 +1,4 @@
-import { datePart, evaluateFormula, FormulaError, lookupKeys, masterIndex, rowKeys } from "./derive";
+import { composeDates, datePart, evaluateFormula, FormulaError, lookupKeys, masterIndex, rowKeys } from "./derive";
 import { cellToString, parseDateValue, parseNumber } from "./infer";
 import type { ColumnMeta, ColumnType, ColumnValues, Frame, Lookup, RawTable } from "./types";
 
@@ -58,6 +58,8 @@ function* frameSteps(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[]): S
     try {
       if (d.kind === "formula") {
         values.set(col.key, { type: "number", values: evaluateFormula(d.expr, values, n) });
+      } else if (d.kind === "datecompose") {
+        values.set(col.key, { type: "date", values: composeDates(d.parts, values, n) });
       } else if (d.kind === "lookup") {
         const l = lookups.find((x) => x.id === d.lookupId);
         if (!l) throw new FormulaError("結合したマスタが見つかりません");

@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { DATE_PART_LABEL, datePartOrder, displayFormula, FormulaError, toStoredFormula } from "../core/derive";
+import { DATE_PART_LABEL, datePartOrder, displayFormula, FormulaError, suggestDateParts, toStoredFormula } from "../core/derive";
 import { buildFrame } from "../core/frame";
-import { formatNumber } from "../core/format";
+import { formatDate, formatNumber } from "../core/format";
 import { newId } from "../core/id";
-import type { ColumnMeta, DatePart, RawTable } from "../core/types";
+import type { ColumnMeta, DatePart, DateParts, Derivation, RawTable } from "../core/types";
 import { Dialog } from "./Dialog";
 import { useApp } from "./store";
 
 const PARTS: DatePart[] = ["year", "quarter", "month", "yearmonth", "weekday", "day", "hour"];
+const COMPOSE_FIELDS: { key: keyof DateParts; label: string }[] = [
+  { key: "year", label: "年" },
+  { key: "month", label: "月" },
+  { key: "day", label: "日" },
+  { key: "hour", label: "時" },
+  { key: "minute", label: "分" },
+];
+type Kind = "formula" | "datepart" | "datecompose";
 
 interface Props {
   open: boolean;
@@ -21,7 +29,8 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
   const columns = useApp((s) => s.dashboard?.columns ?? []);
   const lookups = useApp((s) => s.dashboard?.lookups);
   const update = useApp((s) => s.update);
-  const [kind, setKind] = useState<"formula" | "datepart">("formula");
+  const [kind, setKind] = useState<Kind>("formula");
+  const [parts, setParts] = useState<DateParts>({ year: "", month: null, day: null, hour: null, minute: null });
   const [name, setName] = useState("");
   const [expr, setExpr] = useState("");
   const [source, setSource] = useState("");
@@ -32,12 +41,14 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
   const others = columns.filter((c) => c.key !== editing?.key);
   const numeric = others.filter((c) => c.type === "number");
   const dates = others.filter((c) => c.type === "date");
+  const partCandidates = others.filter((c) => c.type === "number" || c.type === "category" || (c.type === "date" && c.dateUnit === "year"));
 
   useEffect(() => {
     if (!open) return;
     setSubmitted(false);
     const d = editing?.derived;
-    setKind(d?.kind === "datepart" ? "datepart" : "formula");
+    setKind(d?.kind === "datepart" || d?.kind === "datecompose" ? d.kind : "formula");
+    setParts(d?.kind === "datecompose" ? d.parts : (suggestDateParts(others) ?? { year: partCandidates[0]?.key ?? "", month: null, day: null, hour: null, minute: null }));
     setName(editing?.label ?? "");
     setExpr(d?.kind === "formula" ? displayFormula(d.expr, columns) : "");
     setSource(d?.kind === "datepart" ? d.source : (dates[0]?.key ?? ""));
@@ -45,20 +56,20 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
 
-  const autoName = kind === "datepart" ? `${others.find((c) => c.key === source)?.label ?? ""}の${DATE_PART_LABEL[part]}` : "";
+  const autoName = kind === "datepart" ? `${others.find((c) => c.key === source)?.label ?? ""}の${DATE_PART_LABEL[part]}` : kind === "datecompose" ? "日付" : "";
+  const derivation = (): Derivation =>
+    kind === "formula" ? { kind: "formula", expr: toStoredFormula(expr, others) } : kind === "datepart" ? { kind: "datepart", source, part } : { kind: "datecompose", parts };
+  const resultType = kind === "formula" ? "number" : kind === "datepart" ? "category" : "date";
   const label = name.trim() || autoName;
 
   const preview = useMemo(() => {
     if (!open) return { error: null as string | null, samples: [] as string[] };
     try {
-      const derived =
-        kind === "formula"
-          ? { kind: "formula" as const, expr: toStoredFormula(expr, others) }
-          : { kind: "datepart" as const, source, part };
+      const derived = derivation();
       const probe: ColumnMeta = {
         key: "__preview",
         label: "プレビュー",
-        type: kind === "formula" ? "number" : "category",
+        type: resultType,
         inferredType: "number",
         hidden: false,
         idLike: false,
@@ -73,13 +84,13 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
       const samples: string[] = [];
       for (let i = 0; i < Math.min(5, frame.rowCount); i++) {
         const v = col.values[i];
-        samples.push(typeof v === "number" ? formatNumber(v) : (v ?? "—"));
+        samples.push(typeof v === "number" ? (Number.isNaN(v) ? "—" : resultType === "date" ? formatDate(v, "datetime") : formatNumber(v)) : (v ?? "—"));
       }
       return { error: null, samples };
     } catch (e) {
       return { error: e instanceof FormulaError ? e.message : "計算式を読み取れません", samples: [] };
     }
-  }, [open, kind, expr, source, part, raw, others, lookups]);
+  }, [open, kind, expr, source, part, parts, raw, others, lookups]);
 
   const nameTaken = others.some((c) => c.label === label);
   const invalid = !label || nameTaken || !!preview.error || (kind === "formula" && !expr.trim());
@@ -87,12 +98,12 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
   const save = () => {
     setSubmitted(true);
     if (invalid) return;
-    const derived = kind === "formula" ? { kind: "formula" as const, expr: toStoredFormula(expr, others) } : { kind: "datepart" as const, source, part };
+    const derived = derivation();
     const col: ColumnMeta = {
       key: editing?.key ?? `calc:${newId()}`,
       label,
-      type: kind === "formula" ? "number" : "category",
-      inferredType: kind === "formula" ? "number" : "category",
+      type: resultType,
+      inferredType: resultType,
       hidden: editing?.hidden ?? false,
       idLike: false,
       format: editing?.format ?? { prefix: "", suffix: "", decimals: kind === "formula" ? null : null },
@@ -137,6 +148,9 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
             <button type="button" aria-pressed={kind === "datepart"} onClick={() => setKind("datepart")} disabled={dates.length === 0}>
               日付から取り出す
             </button>
+            <button type="button" aria-pressed={kind === "datecompose"} onClick={() => setKind("datecompose")} disabled={partCandidates.length === 0}>
+              年・月・日から作る
+            </button>
           </div>
         </div>
 
@@ -165,6 +179,26 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
                 </option>
               ))}
             </select>
+          </div>
+        ) : kind === "datecompose" ? (
+          <div className="compose-grid">
+            {COMPOSE_FIELDS.map((f) => (
+              <label className="field" key={f.key}>
+                <span className="field-label">{f.label}の列</span>
+                <select
+                  className="select"
+                  value={parts[f.key] ?? ""}
+                  onChange={(e) => setParts({ ...parts, [f.key]: e.target.value || (f.key === "year" ? "" : null) })}
+                >
+                  {f.key !== "year" && <option value="">使わない</option>}
+                  {partCandidates.map((c) => (
+                    <option key={c.key} value={c.key}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           </div>
         ) : (
           <div className="field-row">

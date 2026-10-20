@@ -1180,3 +1180,9 @@
   display: flex;
   gap: 4px;
 }
+
+.compose-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-2);
+}

@@ -306,3 +306,23 @@ describe("relative date presets", () => {
     expect(filterRows(more, [filter]).length).toBe(90);
   });
 });
+
+describe("dates from split columns", () => {
+  it("builds dates from year / month / day / hour columns and suggests them from headers", async () => {
+    const { suggestDateParts } = await import("./derive");
+    const data = { headers: ["現在時刻(年)", "現在時刻(月)", "現在時刻(日)", "現在時刻(時)", "気温"], rows: [[2026, "10", "21", 13, 20.1], [2026, "02", "30", 9, 3]] };
+    const base: ColumnMeta[] = [
+      { ...calc("現在時刻(年)", "現在時刻(年)", undefined, "date"), dateUnit: "year" },
+      calc("現在時刻(月)", "現在時刻(月)", undefined, "category"),
+      calc("現在時刻(日)", "現在時刻(日)", undefined, "category"),
+      calc("現在時刻(時)", "現在時刻(時)", undefined, "category"),
+      calc("気温", "気温", undefined, "number"),
+    ];
+    const parts = suggestDateParts(base)!;
+    expect(parts).toEqual({ year: "現在時刻(年)", month: "現在時刻(月)", day: "現在時刻(日)", hour: "現在時刻(時)", minute: null });
+    const frame = buildFrame(data, [...base, calc("calc:d", "日付", { kind: "datecompose", parts }, "date")]);
+    const v = frame.columns.get("calc:d")!.values as Float64Array;
+    expect(v[0]).toBe(Date.UTC(2026, 9, 21, 13));
+    expect(Number.isNaN(v[1])).toBe(true);
+  });
+});
