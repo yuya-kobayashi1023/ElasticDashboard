@@ -1,53 +1,37 @@
 import { ArrowCounterClockwiseIcon, CalculatorIcon, TreeStructureIcon, EyeIcon, EyeSlashIcon, MagicWandIcon, PencilSimpleIcon, TrashIcon } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { describeDerived, lookupKeys } from "../core/derive";
 import { DerivedDialog } from "./DerivedDialog";
 import { LookupDialog } from "./LookupDialog";
 import { autoFilters, autoWidgets } from "../core/autoDashboard";
-import { buildFrame, columnStats } from "../core/frame";
-import { columnLabel, formatNumber, TYPE_LABEL } from "../core/format";
-import type { ColumnMeta, ColumnType, Lookup, NumberFormat, RawTable } from "../core/types";
+import { columnStatsAsync, type ColumnStats } from "../core/frame";
+import { columnLabel, formatDate, formatNumber, TYPE_LABEL } from "../core/format";
+import type { ColumnMeta, ColumnType, Frame, Lookup, NumberFormat, RawTable } from "../core/types";
 import { TypeIcon } from "../components/TypeIcon";
 import { useApp, useToasts } from "./store";
 
 const count = new Intl.NumberFormat("ja-JP");
 const TYPES: ColumnType[] = ["number", "date", "category", "text"];
 
-export function ColumnSettings({ raw }: { raw: RawTable }) {
+/** `frame` is the dashboard's already built frame (null while a large dataset is still being prepared). */
+export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | null }) {
   const dashboard = useApp((s) => s.dashboard)!;
   const update = useApp((s) => s.update);
   const present = new Set(raw.headers);
-  const typeKey = dashboard.columns.map((c) => `${c.key}:${c.type}:${c.derived ? JSON.stringify(c.derived) : ""}`).join("|");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const frame = useMemo(() => buildFrame(raw, dashboard.columns, dashboard.lookups), [raw, typeKey, dashboard.lookups]);
-  const stats = useMemo(
-    () =>
-      new Map(
-        dashboard.columns.map((c) => {
-          if (!c.derived) return [c.key, columnStats(raw, c)];
-          // Calculated columns: describe the computed values.
-          const col = frame.columns.get(c.key);
-          let blank = 0;
-          const seen = new Set<string>();
-          const samples: string[] = [];
-          if (col) {
-            for (let i = 0; i < frame.rowCount; i++) {
-              const v = col.values[i];
-              const text = typeof v === "number" ? (Number.isNaN(v) ? null : formatNumber(v, c)) : v;
-              if (text === null) {
-                blank++;
-                continue;
-              }
-              if (seen.size < 100000) seen.add(text);
-              if (samples.length < 3 && !samples.includes(text)) samples.push(text);
-            }
-          }
-          return [c.key, { blank, distinct: seen.size, invalid: 0, samples }];
-        }),
-      ),
+  const [stats, setStats] = useState<Map<string, ColumnStats>>(new Map());
+  useEffect(() => {
+    if (!frame) return;
+    const signal = { cancelled: false };
+    const format = (v: number, c: ColumnMeta) => (c.type === "date" ? formatDate(v, c.dateUnit === "year" ? "year" : "day") : formatNumber(v, c));
+    void columnStatsAsync(raw, dashboard.columns, frame, format, signal).then((m) => {
+      if (m && !signal.cancelled) setStats(m);
+    });
+    return () => {
+      signal.cancelled = true;
+    };
+    // Recompute when the data or the converted values change, not on every label edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [raw, frame, typeKey],
-  );
+  }, [raw, frame?.columns]);
   const [derivedOpen, setDerivedOpen] = useState(false);
   const [lookupOpen, setLookupOpen] = useState(false);
   const [editingLookup, setEditingLookup] = useState<Lookup | null>(null);
@@ -81,7 +65,7 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
   const hiddenCount = dashboard.columns.filter((c) => c.hidden).length;
 
   const regenerate = () => {
-    const frame = buildFrame(raw, dashboard.columns, dashboard.lookups);
+    if (!frame) return;
     update((d) => ({ ...d, widgets: autoWidgets(d.columns, frame), filters: autoFilters(d.columns, frame) }));
     useApp.getState().setView("dashboard");
     useToasts.getState().push({
@@ -168,7 +152,7 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
             {dashboard.columns.map((c) => {
               const s = stats.get(c.key);
               const missing = !c.derived && !present.has(c.key);
-              const error = frame.errors.get(c.key);
+              const error = frame?.errors.get(c.key);
               return (
                 <tr key={c.key} className={c.hidden ? "is-hidden-col" : undefined}>
                   <td>
@@ -316,7 +300,7 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
                         </button>
                       </div>
                     ) : (
-                      s && (
+                      (s ? (
                         <>
                           <div className="samples" title={s.samples.join(" / ")}>
                             {s.samples.join(" / ") || "（すべて空欄）"}
@@ -327,7 +311,9 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
                             {s.invalid > 0 && <span className="badge badge-warning">変換できない値 {count.format(s.invalid)}</span>}
                           </div>
                         </>
-                      )
+                      ) : (
+                        <span className="muted">集計中…</span>
+                      ))
                     )}
                   </td>
                 </tr>
@@ -337,7 +323,7 @@ export function ColumnSettings({ raw }: { raw: RawTable }) {
         </table>
       </div>
       <DerivedDialog open={derivedOpen} editing={editingDerived} raw={raw} onClose={() => setDerivedOpen(false)} />
-      <LookupDialog open={lookupOpen} raw={raw} editing={editingLookup} onClose={() => setLookupOpen(false)} />
+      <LookupDialog open={lookupOpen} raw={raw} editing={editingLookup} frame={frame} onClose={() => setLookupOpen(false)} />
     </div>
   );
 }

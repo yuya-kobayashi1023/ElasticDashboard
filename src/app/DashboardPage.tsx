@@ -233,7 +233,7 @@ export function DashboardPage() {
             )}
           </>
         ) : (
-          <ColumnSettings raw={raw!} />
+          <ColumnSettings raw={raw!} frame={frame} />
         )}
       </div>
 

@@ -136,3 +136,53 @@ export function columnStats(raw: RawTable, col: ColumnMeta): ColumnStats {
   }
   return { blank, distinct: distinct.size, invalid, samples };
 }
+
+/**
+ * Statistics for the column settings screen, computed from an already built frame (no re-conversion)
+ * and in time slices so wide, large tables do not freeze the page. Resolves to null when cancelled.
+ */
+export async function columnStatsAsync(
+  raw: RawTable,
+  columns: ColumnMeta[],
+  frame: Frame,
+  format: (v: number, c: ColumnMeta) => string,
+  signal: { cancelled: boolean },
+): Promise<Map<string, ColumnStats> | null> {
+  const out = new Map<string, ColumnStats>();
+  const indexByKey = new Map(raw.headers.map((h, i) => [h, i]));
+  let start = performance.now();
+  const pause = async () => {
+    if (performance.now() - start < 30) return false;
+    await new Promise((r) => setTimeout(r, 0));
+    start = performance.now();
+    return signal.cancelled;
+  };
+  for (const c of columns) {
+    const col = frame.columns.get(c.key);
+    const idx = indexByKey.get(c.key);
+    let blank = 0;
+    let invalid = 0;
+    const distinct = new Set<string>();
+    const samples: string[] = [];
+    for (let i = 0; i < frame.rowCount; i++) {
+      if (i % 5000 === 0 && (await pause())) return null;
+      let text: string | null;
+      if (c.derived || idx === undefined) {
+        if (!col) break;
+        const v = col.values[i];
+        text = typeof v === "number" ? (Number.isNaN(v) ? null : format(v, c)) : v;
+      } else {
+        text = cellToString(raw.rows[i][idx] ?? null);
+        if (text !== null && col && (col.type === "number" || col.type === "date") && Number.isNaN(col.values[i])) invalid++;
+      }
+      if (text === null) {
+        blank++;
+        continue;
+      }
+      if (distinct.size < 100000) distinct.add(text);
+      if (samples.length < 3 && !samples.includes(text)) samples.push(text);
+    }
+    out.set(c.key, { blank, distinct: distinct.size, invalid, samples });
+  }
+  return out;
+}

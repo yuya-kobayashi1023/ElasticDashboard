@@ -12,7 +12,7 @@ import { renderExportHtml, safeFileName, usedColumns } from "../core/export";
 import type { ExportPayload } from "../core/exportFormat";
 import { toggleFilterValue } from "../core/filters";
 import { columnLabel, TYPE_LABEL } from "../core/format";
-import { parseFile, type ParsedSheet } from "../core/parse";
+import { parseFile, type ParsedSheet, type ParseResult } from "../core/parse";
 import type { Dashboard, Filter, RawTable } from "../core/types";
 import "../styles/base.css";
 import "../styles/app.css";
@@ -58,7 +58,7 @@ function Viewer({ initial }: { initial: ExportPayload }) {
         .filter((c) => c.derived?.kind === "lookup" && c.derived.lookupId === l.id)
         .map((c) => (c.derived as { column: string }).column);
       const needed = [...keys, ...used];
-      const result = parseFile(file.name, await file.arrayBuffer());
+      const result = await parseOffThread(file);
       const sheet = result.sheets.find((s) => needed.every((h) => s.table.headers.includes(h))) ?? result.sheets[0];
       const missing = needed.filter((h) => !sheet.table.headers.includes(h));
       if (missing.length) {
@@ -109,7 +109,7 @@ function Viewer({ initial }: { initial: ExportPayload }) {
       // Let the busy state paint before parsing on the main thread.
       await new Promise((r) => setTimeout(r, 30));
       try {
-        const result = parseFile(file.name, await file.arrayBuffer());
+        const result = await parseOffThread(file);
         if (result.sheets.length > 1) setSheets({ fileName: file.name, sheets: result.sheets });
         else apply(file.name, result.sheets[0], result.encoding);
       } catch (e) {
@@ -347,8 +347,42 @@ function Dashboard_({ dashboard, raw, filters, setFilters }: { dashboard: Dashbo
   );
 }
 
-const el = document.getElementById("ed-data");
-const root = document.getElementById("root");
+/**
+ * Parses a file off the main thread. The viewer has no separate worker file (the export is a single
+ * HTML), so it starts its own inlined code as a worker; see the worker branch at the bottom.
+ */
+async function parseOffThread(file: File): Promise<ParseResult> {
+  const buffer = await file.arrayBuffer();
+  const code = document.getElementById("ed-app")?.textContent;
+  if (code && typeof Worker !== "undefined") {
+    let url: string | null = null;
+    try {
+      url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+      const worker = new Worker(url);
+      const copy = buffer.slice(0);
+      const res = await new Promise<ViewerWorkerResponse>((resolve, reject) => {
+        worker.onmessage = (e: MessageEvent<ViewerWorkerResponse>) => resolve(e.data);
+        worker.onerror = () => reject(new Error("worker"));
+        worker.postMessage({ name: file.name, buffer: copy }, [copy]);
+      });
+      worker.terminate();
+      if (!res.ok) throw new Error(res.message);
+      res.result.sheets.forEach((sh, i) => (sh.table.rows = JSON.parse(res.rows[i])));
+      return res.result;
+    } catch (e) {
+      // A parse error is final; anything else (blocked workers on file://, old browsers) falls back below.
+      if (e instanceof Error && e.message !== "worker") throw e;
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+    }
+  }
+  return parseFile(file.name, buffer);
+}
+
+type ViewerWorkerResponse = { ok: true; result: ParseResult; rows: string[] } | { ok: false; message: string };
+
+const el = typeof document === "undefined" ? null : document.getElementById("ed-data");
+const root = typeof document === "undefined" ? null : document.getElementById("root");
 if (el && root) {
   const data = JSON.parse(el.textContent ?? "{}") as Partial<ExportPayload> & { dashboard: Dashboard };
   const payload: ExportPayload = { format: "elastic-dashboard", version: 1, dashboard: data.dashboard, raw: data.raw ?? null, exportedAt: data.exportedAt ?? 0 };
@@ -357,4 +391,20 @@ if (el && root) {
       <Viewer initial={payload} />
     </StrictMode>,
   );
+}
+
+// Running as the parse worker started by parseOffThread.
+if (typeof document === "undefined" && typeof self !== "undefined") {
+  self.onmessage = (e: MessageEvent<{ name: string; buffer: ArrayBuffer }>) => {
+    let res: ViewerWorkerResponse;
+    try {
+      const result = parseFile(e.data.name, e.data.buffer);
+      const rows = result.sheets.map((sh) => JSON.stringify(sh.table.rows));
+      for (const sh of result.sheets) sh.table = { headers: sh.table.headers, rows: [] };
+      res = { ok: true, result, rows };
+    } catch (err) {
+      res = { ok: false, message: err instanceof Error ? err.message : "ファイルを読み込めませんでした。" };
+    }
+    self.postMessage(res);
+  };
 }

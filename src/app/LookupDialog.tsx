@@ -6,7 +6,7 @@ import type { ParsedSheet } from "../core/grid";
 import { newId } from "../core/id";
 import { inferColumn } from "../core/infer";
 import { ACCEPT, readDataFile } from "../core/readFile";
-import type { ColumnMeta, ColumnValues, Lookup, RawTable } from "../core/types";
+import type { ColumnMeta, ColumnValues, Frame, Lookup, RawTable } from "../core/types";
 import { Dialog } from "./Dialog";
 import { useApp, useToasts } from "./store";
 
@@ -17,6 +17,8 @@ interface Props {
   raw: RawTable;
   /** Lookup to update (new master file, keys or columns); null to join a new master. */
   editing: Lookup | null;
+  /** The dashboard's built frame, used to preview matches without converting the data again. */
+  frame: Frame | null;
   onClose: () => void;
 }
 
@@ -26,7 +28,7 @@ interface KeyPair {
 }
 
 /** Joins a master table (store list, product list…) by one or more key columns and adds its columns. */
-export function LookupDialog({ open, raw, editing, onClose }: Props) {
+export function LookupDialog({ open, raw, editing, frame: shared, onClose }: Props) {
   const dashboard = useApp((s) => s.dashboard)!;
   const update = useApp((s) => s.update);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,12 +96,12 @@ export function LookupDialog({ open, raw, editing, onClose }: Props) {
 
   const report = useMemo(() => {
     if (!sheet || pairs.length === 0 || pairs.some((p) => !p.local || !p.master)) return null;
-    const frame = buildFrame(raw, dashboard.columns, dashboard.lookups);
+    const frame = shared ?? buildFrame(raw, dashboard.columns, dashboard.lookups);
     const cols = pairs.map((p) => frame.columns.get(p.local));
     if (cols.some((c) => !c)) return null;
     const probe: Lookup = { id: "probe", fileName: "", table: sheet.table, masterKeys: pairs.map((p) => p.master), localKeys: pairs.map((p) => p.local) };
     return matchReport(rowKeys(cols as ColumnValues[], frame.rowCount), masterIndex(probe, (cols as ColumnValues[]).map((c) => c.type === "date")));
-  }, [sheet, pairs, raw, dashboard.columns, dashboard.lookups]);
+  }, [sheet, pairs, raw, dashboard.columns, dashboard.lookups, shared]);
 
   const labels = new Set(dashboard.columns.filter((c) => !own(c)).map((c) => c.label));
   const columnsToAdd = sheet ? sheet.table.headers.filter((h) => !masterKeySet.has(h) && picked.has(h)) : [];
