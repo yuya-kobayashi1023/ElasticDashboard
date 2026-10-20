@@ -1,4 +1,5 @@
-import { FileArrowDownIcon, FileArrowUpIcon, FloppyDiskIcon, InfoIcon, TableIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { FileArrowDownIcon, FileArrowUpIcon, FloppyDiskIcon, InfoIcon, TableIcon, TreeStructureIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { lookupKeys } from "../core/derive";
 import { StrictMode, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Dialog } from "../app/Dialog";
@@ -34,6 +35,46 @@ function Viewer({ initial }: { initial: ExportPayload }) {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const masterRef = useRef<HTMLInputElement>(null);
+  const [masterTarget, setMasterTarget] = useState<string | null>(null);
+  const [masterPicker, setMasterPicker] = useState(false);
+  const lookups = dashboard.lookups ?? [];
+
+  const pickMaster = (id: string) => {
+    setMasterTarget(id);
+    setMasterPicker(false);
+    masterRef.current?.click();
+  };
+
+  /** Replaces a joined master table with a new file that has the same key and value columns. */
+  const updateMaster = async (file: File) => {
+    const l = lookups.find((x) => x.id === masterTarget);
+    if (!l) return;
+    setBusy(true);
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const keys = lookupKeys(l).master;
+      const used = dashboard.columns
+        .filter((c) => c.derived?.kind === "lookup" && c.derived.lookupId === l.id)
+        .map((c) => (c.derived as { column: string }).column);
+      const needed = [...keys, ...used];
+      const result = parseFile(file.name, await file.arrayBuffer());
+      const sheet = result.sheets.find((s) => needed.every((h) => s.table.headers.includes(h))) ?? result.sheets[0];
+      const missing = needed.filter((h) => !sheet.table.headers.includes(h));
+      if (missing.length) {
+        setNotice({ tone: "error", text: `「${file.name}」に ${missing.join("、")} 列がないため、マスタを更新できません。` });
+        return;
+      }
+      const idx = needed.map((h) => sheet.table.headers.indexOf(h));
+      const table = { headers: needed, rows: sheet.table.rows.map((r) => idx.map((i) => r[i] ?? null)) };
+      setDashboard({ ...dashboard, lookups: lookups.map((x) => (x.id === l.id ? { ...x, fileName: file.name, table } : x)) });
+      setNotice({ tone: "info", text: `マスタ「${l.fileName}」を「${file.name}」（${count.format(table.rows.length)} 行）に更新しました。このデータで残すには「HTML を保存」を押してください。` });
+    } catch (e) {
+      setNotice({ tone: "error", text: e instanceof Error ? e.message : "マスタのファイルを読み込めませんでした。" });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const apply = useCallback(
     (fileName: string, sheet: ParsedSheet, encoding: string | null) => {
@@ -160,6 +201,17 @@ function Viewer({ initial }: { initial: ExportPayload }) {
                   <FileArrowUpIcon size={18} aria-hidden />
                   データを読み込む
                 </button>
+                {lookups.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => (lookups.length === 1 ? pickMaster(lookups[0].id) : setMasterPicker(true))}
+                  >
+                    <TreeStructureIcon size={18} aria-hidden />
+                    マスタを更新
+                  </button>
+                )}
                 <button type="button" className="btn btn-primary" onClick={() => void save()}>
                   <FloppyDiskIcon size={18} aria-hidden />
                   HTML を保存
@@ -167,6 +219,17 @@ function Viewer({ initial }: { initial: ExportPayload }) {
               </>
             )}
             {fileInput}
+            <input
+              ref={masterRef}
+              type="file"
+              accept={ACCEPT}
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void updateMaster(f);
+              }}
+            />
           </div>
         </header>
 
@@ -200,6 +263,25 @@ function Viewer({ initial }: { initial: ExportPayload }) {
             </p>
           </div>
         )}
+
+        <Dialog open={masterPicker} onClose={() => setMasterPicker(false)} title="更新するマスタを選択" width={520}>
+          <div className="choice-list">
+            {lookups.map((l) => (
+              <button type="button" key={l.id} className="choice" onClick={() => pickMaster(l.id)}>
+                <TreeStructureIcon size={22} aria-hidden className="muted" />
+                <span className="choice-text">
+                  <span className="choice-title">{l.fileName}</span>
+                  <span className="choice-sub">
+                    {lookupKeys(l)
+                      .local.map((k) => columnLabel(dashboard.columns, k))
+                      .join(" + ")}
+                    で結合
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Dialog>
 
         <Dialog open={!!sheets} onClose={() => setSheets(null)} title="読み込むシートを選択" width={520}>
           <div className="choice-list">
