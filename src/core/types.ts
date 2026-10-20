@@ -19,17 +19,30 @@ export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | 
 export type Derivation =
   | { kind: "formula"; /** Column references are stored as [key] */ expr: string }
   | { kind: "datepart"; source: string; part: DatePart }
-  | { kind: "lookup"; lookupId: string; /** Column header in the master table */ column: string };
+  | { kind: "lookup"; lookupId: string; /** Column header in the master table */ column: string }
+  | { kind: "datecompose"; parts: DateParts };
+
+/** Columns holding the pieces of a timestamp that is split across columns (null = not used). */
+export interface DateParts {
+  year: string;
+  month: string | null;
+  day: string | null;
+  hour: string | null;
+  minute: string | null;
+}
 
 /** A master table joined by key (e.g. store code → store name). Kept with the dashboard so it survives data replacement. */
 export interface Lookup {
   id: string;
   fileName: string;
   table: RawTable;
-  /** Key column in the master table */
-  masterKey: string;
-  /** Key column in the dashboard data */
-  localKey: string;
+  /** Key columns in the master table; several columns form a composite key (e.g. 店舗コード + 月). */
+  masterKeys: string[];
+  /** Matching key columns in the dashboard data, same order as masterKeys. */
+  localKeys: string[];
+  /** Saved before composite keys existed. */
+  masterKey?: string;
+  localKey?: string;
 }
 
 export interface ColumnMeta {
@@ -46,6 +59,8 @@ export interface ColumnMeta {
   derived?: Derivation;
   /** Explicit value order for categories (weekdays, months). */
   order?: string[];
+  /** Date columns holding only a year (e.g. "1750") display and convert as years. */
+  dateUnit?: "year";
 }
 
 export type Agg = "count" | "sum" | "avg" | "min" | "max" | "distinct";
@@ -101,6 +116,8 @@ export interface TimeWidget extends WidgetBase {
   bucket: TimeBucket;
   measure: Measure;
   split: string | null;
+  /** Several numeric columns side by side (wide data such as one column per prefecture). Overrides split. */
+  series?: string[] | null;
   mark: "line" | "column";
 }
 
@@ -135,7 +152,17 @@ export type WidgetKind = Widget["kind"];
 
 export type Filter =
   | { id: string; column: string; kind: "values"; values: string[] }
-  | { id: string; column: string; kind: "range"; min: number | null; max: number | null };
+  | {
+      id: string;
+      column: string;
+      kind: "range";
+      min: number | null;
+      max: number | null;
+      /** Relative date range, recomputed from the data's latest date every time (min/max are ignored). */
+      preset?: DatePreset | null;
+    };
+
+export type DatePreset = "last-month" | "last-30" | "last-90" | "latest-year";
 
 export interface DataSource {
   fileName: string;

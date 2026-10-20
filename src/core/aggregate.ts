@@ -1,3 +1,4 @@
+import { isFilterActive, presetRange } from "./filters";
 import type { Agg, BarSort, Filter, Frame, Measure, TimeBucket } from "./types";
 
 export const BLANK_LABEL = "(空欄)";
@@ -6,7 +7,7 @@ export const OTHER_LABEL = "その他";
 export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: string): Uint32Array {
   const active = filters.filter((f) => {
     if (f.id === skipFilterId || !frame.columns.has(f.column)) return false;
-    return f.kind === "values" ? f.values.length > 0 : f.min !== null || f.max !== null;
+    return isFilterActive(f);
   });
   const out = new Uint32Array(frame.rowCount);
   let n = 0;
@@ -18,8 +19,14 @@ export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: strin
       return (i: number) => set.has(col.values[i] ?? BLANK_LABEL);
     }
     if (col.type !== "number" && col.type !== "date") return () => true;
-    const lo = f.min ?? -Infinity;
-    const hi = f.max ?? Infinity;
+    let lo = f.min ?? -Infinity;
+    let hi = f.max ?? Infinity;
+    if (f.preset && col.type === "date") {
+      let latest = -Infinity;
+      for (const v of col.values) if (v > latest) latest = v;
+      if (latest === -Infinity) return () => false;
+      [lo, hi] = presetRange(f.preset, latest);
+    }
     return (i: number) => {
       const v = col.values[i];
       return v >= lo && v <= hi;
@@ -509,4 +516,24 @@ export function comparePeriods(frame: Frame, rows: Uint32Array, measure: Measure
     spark: values.slice(-12),
     partial: floorDate(maxDate, "day") < lastDayOfBucket,
   };
+}
+
+/** One series per numeric column, all on the same buckets (wide tables). */
+export function timeSeriesColumns(
+  frame: Frame,
+  rows: Uint32Array,
+  dateKey: string,
+  bucket: TimeBucket,
+  agg: Agg,
+  columns: string[],
+  label: (key: string) => string,
+): TimeSeriesResult {
+  let result: TimeSeriesResult = { bucket: "day", buckets: [], series: [] };
+  for (const key of columns.slice(0, MAX_SERIES + 1)) {
+    const r = timeSeries(frame, rows, dateKey, bucket, { agg: agg === "count" ? "sum" : agg, column: key }, null);
+    if (r.series.length === 0) continue;
+    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [] };
+    result.series.push({ label: label(key), values: r.series[0].values });
+  }
+  return result;
 }

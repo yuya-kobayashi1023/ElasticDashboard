@@ -104,7 +104,7 @@ export function measureLabel(m: Measure, meta: Map<string, ColumnMeta> | ColumnM
 export function formatMeasure(v: number, m: Measure, meta: Map<string, ColumnMeta>, style: "full" | "compact" = "full"): string {
   if (m.agg === "count" || m.agg === "distinct" || !m.column) return formatNumber(v, null, style);
   const col = meta.get(m.column);
-  if (col?.type === "date") return formatDate(v, "day");
+  if (col?.type === "date") return formatDate(v, col.dateUnit === "year" ? "year" : "day");
   if (m.agg === "avg" && col && col.format.decimals === 0) {
     return formatNumber(v, { ...col, format: { ...col.format, decimals: null } }, style);
   }
@@ -124,6 +124,10 @@ export function widgetTitle(w: Widget, meta: Map<string, ColumnMeta> | ColumnMet
     case "bar":
       return `${byLabel(columnLabel(meta, w.dimension))}${measureLabel(w.measure, meta)}`;
     case "time": {
+      if (w.series?.length) {
+        const names = w.series.map((k) => columnLabel(meta, k));
+        return `${names.length <= 3 ? names.join("・") : `${names.slice(0, 2).join("・")} ほか${names.length - 2}列`}の推移`;
+      }
       const base = `${measureLabel(w.measure, meta)}の推移`;
       return w.split ? `${byLabel(columnLabel(meta, w.split))}${base}` : base;
     }

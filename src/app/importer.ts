@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { parseDelimited, type ParsedSheet } from "../core/grid";
 import { usedColumns } from "../core/export";
 import { isExportHtml, parseExportHtml } from "../core/exportFormat";
-import { columnLabel } from "../core/format";
+import type { ReplaceReport } from "../core/autoDashboard";
+import { columnLabel, TYPE_LABEL } from "../core/format";
 import type { Dashboard } from "../core/types";
 import type { ParseResult } from "../core/parse";
 import { readDataFile } from "../core/readFile";
@@ -45,6 +46,11 @@ interface ImportState {
 }
 
 const count = new Intl.NumberFormat("ja-JP");
+
+/** "種類を変えた列: year（数値 → カテゴリ）" */
+function retypedText(retyped: ReplaceReport["retyped"]): string {
+  return `新しいデータに合わせて種類を変えた列: ${retyped.map((r) => `${r.label}（${TYPE_LABEL[r.from]} → ${TYPE_LABEL[r.to]}）`).join("、")}`;
+}
 const baseName = (name: string) => name.replace(/\.[^.]+$/, "");
 
 async function finalize(fileName: string, sheet: ParsedSheet, mode: ImportMode, encoding: ParseResult["encoding"], multiSheet: boolean, confirmed = false) {
@@ -72,10 +78,11 @@ async function finalize(fileName: string, sheet: ParsedSheet, mode: ImportMode, 
     const report = await app.createFrom(t.dashboard, sheet.table, source, sheet.prepared?.columns);
     toast(
       {
-        tone: report.missing.length ? "info" : "success",
+        tone: report.missing.length || report.retyped.length ? "info" : "success",
         message:
           `テンプレート「${t.dashboard.name}」に「${fileName}」を読み込みました（${size}）。` +
           (report.missing.length ? `見つからない列: ${report.missing.join("、")}。` : "") +
+          (report.retyped.length ? `${retypedText(report.retyped)}。` : "") +
           (notes.length ? notes.join("。") + "。" : ""),
       },
       10000,
@@ -89,8 +96,9 @@ async function finalize(fileName: string, sheet: ParsedSheet, mode: ImportMode, 
     if (r.duplicates > 0) parts.push(`うち ${count.format(r.duplicates)} 行は、すでにある行と同じ内容です。同じファイルを重ねて追加していないか確認してください`);
     if (r.added.length) parts.push(`新しい列: ${r.added.join("、")}`);
     if (r.missing.length) parts.push(`追加したファイルにない列: ${r.missing.join("、")}（空欄になります）`);
+    if (r.retyped.length) parts.push(retypedText(r.retyped));
     toast(
-      { tone: r.missing.length || r.duplicates ? "info" : "success", message: parts.concat(notes).join("。") + "。", action: { label: "元に戻す", run: () => useApp.getState().undo() } },
+      { tone: r.missing.length || r.duplicates || r.retyped.length ? "info" : "success", message: parts.concat(notes).join("。") + "。", action: { label: "元に戻す", run: () => useApp.getState().undo() } },
       r.missing.length ? 12000 : 8000,
     );
     return;
@@ -114,9 +122,10 @@ async function finalize(fileName: string, sheet: ParsedSheet, mode: ImportMode, 
   const parts = [`データを「${fileName}」に差し替えました（${size}）`];
   if (report.added.length) parts.push(`新しい列: ${report.added.join("、")}`);
   if (report.missing.length) parts.push(`見つからない列: ${report.missing.join("、")}`);
+  if (report.retyped.length) parts.push(retypedText(report.retyped));
   toast(
     {
-      tone: report.missing.length ? "info" : "success",
+      tone: report.missing.length || report.retyped.length ? "info" : "success",
       message: parts.concat(notes).join("。") + "。",
       action: { label: "元に戻す", run: () => useApp.getState().undo() },
     },

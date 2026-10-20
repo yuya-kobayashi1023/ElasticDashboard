@@ -1,4 +1,5 @@
-import { FileArrowDownIcon, FileArrowUpIcon, FloppyDiskIcon, InfoIcon, TableIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { FileArrowDownIcon, FileArrowUpIcon, FloppyDiskIcon, InfoIcon, TableIcon, TreeStructureIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { lookupKeys } from "../core/derive";
 import { StrictMode, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Dialog } from "../app/Dialog";
@@ -10,8 +11,8 @@ import { mergeColumns } from "../core/autoDashboard";
 import { renderExportHtml, safeFileName, usedColumns } from "../core/export";
 import type { ExportPayload } from "../core/exportFormat";
 import { toggleFilterValue } from "../core/filters";
-import { columnLabel } from "../core/format";
-import { parseFile, type ParsedSheet } from "../core/parse";
+import { columnLabel, TYPE_LABEL } from "../core/format";
+import { parseFile, type ParsedSheet, type ParseResult } from "../core/parse";
 import type { Dashboard, Filter, RawTable } from "../core/types";
 import "../styles/base.css";
 import "../styles/app.css";
@@ -34,6 +35,46 @@ function Viewer({ initial }: { initial: ExportPayload }) {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const masterRef = useRef<HTMLInputElement>(null);
+  const [masterTarget, setMasterTarget] = useState<string | null>(null);
+  const [masterPicker, setMasterPicker] = useState(false);
+  const lookups = dashboard.lookups ?? [];
+
+  const pickMaster = (id: string) => {
+    setMasterTarget(id);
+    setMasterPicker(false);
+    masterRef.current?.click();
+  };
+
+  /** Replaces a joined master table with a new file that has the same key and value columns. */
+  const updateMaster = async (file: File) => {
+    const l = lookups.find((x) => x.id === masterTarget);
+    if (!l) return;
+    setBusy(true);
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const keys = lookupKeys(l).master;
+      const used = dashboard.columns
+        .filter((c) => c.derived?.kind === "lookup" && c.derived.lookupId === l.id)
+        .map((c) => (c.derived as { column: string }).column);
+      const needed = [...keys, ...used];
+      const result = await parseOffThread(file);
+      const sheet = result.sheets.find((s) => needed.every((h) => s.table.headers.includes(h))) ?? result.sheets[0];
+      const missing = needed.filter((h) => !sheet.table.headers.includes(h));
+      if (missing.length) {
+        setNotice({ tone: "error", text: `「${file.name}」に ${missing.join("、")} 列がないため、マスタを更新できません。` });
+        return;
+      }
+      const idx = needed.map((h) => sheet.table.headers.indexOf(h));
+      const table = { headers: needed, rows: sheet.table.rows.map((r) => idx.map((i) => r[i] ?? null)) };
+      setDashboard({ ...dashboard, lookups: lookups.map((x) => (x.id === l.id ? { ...x, fileName: file.name, table } : x)) });
+      setNotice({ tone: "info", text: `マスタ「${l.fileName}」を「${file.name}」（${count.format(table.rows.length)} 行）に更新しました。このデータで残すには「HTML を保存」を押してください。` });
+    } catch (e) {
+      setNotice({ tone: "error", text: e instanceof Error ? e.message : "マスタのファイルを読み込めませんでした。" });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const apply = useCallback(
     (fileName: string, sheet: ParsedSheet, encoding: string | null) => {
@@ -47,6 +88,9 @@ function Viewer({ initial }: { initial: ExportPayload }) {
       const parts = [`「${fileName}」を読み込みました（${count.format(sheet.table.rows.length)} 行）`];
       if (missingUsed.length) parts.push(`グラフで使う列のうち、${missingUsed.map((k) => columnLabel(next.columns, k)).join("、")} が見つかりません`);
       if (report.added.length) parts.push(`新しい列: ${report.added.join("、")}`);
+      if (report.retyped.length) {
+        parts.push(`新しいデータに合わせて種類を変えた列: ${report.retyped.map((r) => `${r.label}（${TYPE_LABEL[r.from]} → ${TYPE_LABEL[r.to]}）`).join("、")}`);
+      }
       parts.push(...sheet.notes);
       if (encoding === "shift_jis") parts.push("文字コードは Shift_JIS として読み込みました");
       parts.push("このデータで残すには「HTML を保存」を押してください");
@@ -65,7 +109,7 @@ function Viewer({ initial }: { initial: ExportPayload }) {
       // Let the busy state paint before parsing on the main thread.
       await new Promise((r) => setTimeout(r, 30));
       try {
-        const result = parseFile(file.name, await file.arrayBuffer());
+        const result = await parseOffThread(file);
         if (result.sheets.length > 1) setSheets({ fileName: file.name, sheets: result.sheets });
         else apply(file.name, result.sheets[0], result.encoding);
       } catch (e) {
@@ -160,6 +204,17 @@ function Viewer({ initial }: { initial: ExportPayload }) {
                   <FileArrowUpIcon size={18} aria-hidden />
                   データを読み込む
                 </button>
+                {lookups.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => (lookups.length === 1 ? pickMaster(lookups[0].id) : setMasterPicker(true))}
+                  >
+                    <TreeStructureIcon size={18} aria-hidden />
+                    マスタを更新
+                  </button>
+                )}
                 <button type="button" className="btn btn-primary" onClick={() => void save()}>
                   <FloppyDiskIcon size={18} aria-hidden />
                   HTML を保存
@@ -167,6 +222,17 @@ function Viewer({ initial }: { initial: ExportPayload }) {
               </>
             )}
             {fileInput}
+            <input
+              ref={masterRef}
+              type="file"
+              accept={ACCEPT}
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void updateMaster(f);
+              }}
+            />
           </div>
         </header>
 
@@ -200,6 +266,25 @@ function Viewer({ initial }: { initial: ExportPayload }) {
             </p>
           </div>
         )}
+
+        <Dialog open={masterPicker} onClose={() => setMasterPicker(false)} title="更新するマスタを選択" width={520}>
+          <div className="choice-list">
+            {lookups.map((l) => (
+              <button type="button" key={l.id} className="choice" onClick={() => pickMaster(l.id)}>
+                <TreeStructureIcon size={22} aria-hidden className="muted" />
+                <span className="choice-text">
+                  <span className="choice-title">{l.fileName}</span>
+                  <span className="choice-sub">
+                    {lookupKeys(l)
+                      .local.map((k) => columnLabel(dashboard.columns, k))
+                      .join(" + ")}
+                    で結合
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Dialog>
 
         <Dialog open={!!sheets} onClose={() => setSheets(null)} title="読み込むシートを選択" width={520}>
           <div className="choice-list">
@@ -242,6 +327,14 @@ function Viewer({ initial }: { initial: ExportPayload }) {
 function Dashboard_({ dashboard, raw, filters, setFilters }: { dashboard: Dashboard; raw: RawTable; filters: Filter[]; setFilters: React.Dispatch<React.SetStateAction<Filter[]>> }) {
   const { frame, rows } = useDashboardData(raw, dashboard.columns, filters, dashboard.lookups);
   const onToggle = useCallback((column: string, value: string) => setFilters((f) => toggleFilterValue(f, column, value)), [setFilters]);
+  if (!frame) {
+    return (
+      <div className="busy-banner" role="status">
+        <span className="spinner" aria-hidden />
+        {raw.rows.length.toLocaleString("ja-JP")} 行を集計しています…
+      </div>
+    );
+  }
   return (
     <>
       <FilterBar frame={frame} filters={filters} filteredCount={rows.length} onChange={setFilters} />
@@ -254,8 +347,42 @@ function Dashboard_({ dashboard, raw, filters, setFilters }: { dashboard: Dashbo
   );
 }
 
-const el = document.getElementById("ed-data");
-const root = document.getElementById("root");
+/**
+ * Parses a file off the main thread. The viewer has no separate worker file (the export is a single
+ * HTML), so it starts its own inlined code as a worker; see the worker branch at the bottom.
+ */
+async function parseOffThread(file: File): Promise<ParseResult> {
+  const buffer = await file.arrayBuffer();
+  const code = document.getElementById("ed-app")?.textContent;
+  if (code && typeof Worker !== "undefined") {
+    let url: string | null = null;
+    try {
+      url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+      const worker = new Worker(url);
+      const copy = buffer.slice(0);
+      const res = await new Promise<ViewerWorkerResponse>((resolve, reject) => {
+        worker.onmessage = (e: MessageEvent<ViewerWorkerResponse>) => resolve(e.data);
+        worker.onerror = () => reject(new Error("worker"));
+        worker.postMessage({ name: file.name, buffer: copy }, [copy]);
+      });
+      worker.terminate();
+      if (!res.ok) throw new Error(res.message);
+      res.result.sheets.forEach((sh, i) => (sh.table.rows = JSON.parse(res.rows[i])));
+      return res.result;
+    } catch (e) {
+      // A parse error is final; anything else (blocked workers on file://, old browsers) falls back below.
+      if (e instanceof Error && e.message !== "worker") throw e;
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+    }
+  }
+  return parseFile(file.name, buffer);
+}
+
+type ViewerWorkerResponse = { ok: true; result: ParseResult; rows: string[] } | { ok: false; message: string };
+
+const el = typeof document === "undefined" ? null : document.getElementById("ed-data");
+const root = typeof document === "undefined" ? null : document.getElementById("root");
 if (el && root) {
   const data = JSON.parse(el.textContent ?? "{}") as Partial<ExportPayload> & { dashboard: Dashboard };
   const payload: ExportPayload = { format: "elastic-dashboard", version: 1, dashboard: data.dashboard, raw: data.raw ?? null, exportedAt: data.exportedAt ?? 0 };
@@ -264,4 +391,20 @@ if (el && root) {
       <Viewer initial={payload} />
     </StrictMode>,
   );
+}
+
+// Running as the parse worker started by parseOffThread.
+if (typeof document === "undefined" && typeof self !== "undefined") {
+  self.onmessage = (e: MessageEvent<{ name: string; buffer: ArrayBuffer }>) => {
+    let res: ViewerWorkerResponse;
+    try {
+      const result = parseFile(e.data.name, e.data.buffer);
+      const rows = result.sheets.map((sh) => JSON.stringify(sh.table.rows));
+      for (const sh of result.sheets) sh.table = { headers: sh.table.headers, rows: [] };
+      res = { ok: true, result, rows };
+    } catch (err) {
+      res = { ok: false, message: err instanceof Error ? err.message : "ファイルを読み込めませんでした。" };
+    }
+    self.postMessage(res);
+  };
 }

@@ -202,7 +202,7 @@ describe("master lookups", () => {
   });
   it("adds master columns by key and leaves unmatched rows blank", async () => {
     const data = { headers: ["店舗コード", "売上"], rows: [["001", 100], ["002", 50], ["009", 10]] };
-    const lookup = { id: "m", fileName: "店舗.csv", table: { headers: ["店舗コード", "店舗名", "面積"], rows: [[1, "新宿", "120"], [2, "梅田", "80"]] }, masterKey: "店舗コード", localKey: "店舗コード" };
+    const lookup = { id: "m", fileName: "店舗.csv", table: { headers: ["店舗コード", "店舗名", "面積"], rows: [[1, "新宿", "120"], [2, "梅田", "80"]] }, masterKeys: ["店舗コード"], localKeys: ["店舗コード"] };
     const cols: ColumnMeta[] = [
       { ...calc("店舗コード", "店舗コード", undefined, "category") },
       { ...calc("売上", "売上", undefined, "number") },
@@ -233,5 +233,107 @@ describe("compressed export", () => {
     const { gunzipBase64 } = await import("./gzip");
     const app = /id="ed-app-gz">([^<]*)</.exec(packed)![1];
     expect((await gunzipBase64(app)).endsWith("<\\/script>")).toBe(true);
+  });
+});
+
+describe("composite and legacy lookup keys", () => {
+  const cols = (extra: ColumnMeta[]): ColumnMeta[] => [
+    calc("店舗", "店舗", undefined, "category"),
+    calc("月", "月", undefined, "category"),
+    calc("売上", "売上", undefined, "number"),
+    ...extra,
+  ];
+  const data = { headers: ["店舗", "月", "売上"], rows: [["S1", "10", 100], ["S1", "11", 120], ["S2", "10", 80], ["S2", null, 5]] };
+  const target = { headers: ["店舗", "月", "目標"], rows: [["S1", "10", 90], ["S1", "11", 130], ["S2", "10", 70]] };
+  it("matches on several columns", () => {
+    const l = { id: "t", fileName: "目標.csv", table: target, masterKeys: ["店舗", "月"], localKeys: ["店舗", "月"] };
+    const frame = buildFrame(data, cols([calc("lookup:t:目標", "目標", { kind: "lookup", lookupId: "t", column: "目標" }, "number")]), [l]);
+    expect(Array.from(frame.columns.get("lookup:t:目標")!.values as Float64Array)).toEqual([90, 130, 70, NaN]);
+  });
+  it("still reads single-key lookups saved by older versions", () => {
+    const legacy = { id: "t", fileName: "目標.csv", table: target, masterKey: "店舗", localKey: "店舗" } as unknown as import("./types").Lookup;
+    const frame = buildFrame(data, cols([calc("lookup:t:目標", "目標", { kind: "lookup", lookupId: "t", column: "目標" }, "number")]), [legacy]);
+    expect(Array.from(frame.columns.get("lookup:t:目標")!.values as Float64Array)).toEqual([90, 90, 70, 70]);
+  });
+});
+
+describe("date keys", () => {
+  it("matches dates written differently", () => {
+    const data = { headers: ["日付", "件数"], rows: [["2025/10/01", 3], ["2025-10-02", 4]] };
+    const master = { headers: ["日付", "天気"], rows: [["2025-10-01", "晴れ"], ["20251002", "雨"]] };
+    const l = { id: "w", fileName: "天気.csv", table: master, masterKeys: ["日付"], localKeys: ["日付"] };
+    const cols: ColumnMeta[] = [calc("日付", "日付", undefined, "date"), calc("件数", "件数", undefined, "number"), calc("lookup:w:天気", "天気", { kind: "lookup", lookupId: "w", column: "天気" }, "category")];
+    expect(buildFrame(data, cols, [l]).columns.get("lookup:w:天気")!.values).toEqual(["晴れ", "雨"]);
+  });
+});
+
+describe("column types across data updates", () => {
+  // Two countries per year, like the OWID data: years repeat, so they are not an ID column.
+  const years = (from: number, to: number) => Array.from({ length: (to - from + 1) * 2 }, (_, i) => [String(from + Math.floor(i / 2)), String(i * 10)]);
+  const base = { headers: ["year", "co2"], rows: years(1750, 1999) };
+  const later = { headers: ["year", "co2"], rows: years(2000, 2023) };
+  const d = createDashboard(base, { fileName: "a.csv", sheetName: null, importedAt: 0 }, "a");
+  it("keeps the column type after appending rows", () => {
+    expect(d.columns.find((c) => c.key === "year")!.type).toBe("date");
+    expect(d.columns.find((c) => c.key === "co2")!.type).toBe("number");
+    const merged = appendRows(base, later);
+    const { columns, report } = mergeColumns(d.columns, merged, base.headers, createDashboard(later, { fileName: "b", sheetName: null, importedAt: 0 }, "b").columns);
+    expect(columns.find((c) => c.key === "year")!.type).toBe("date");
+    expect(columns.find((c) => c.key === "co2")!.type).toBe("number");
+    expect(report.retyped).toEqual([]);
+  });
+  it("re-types and reports when the new values no longer fit", () => {
+    const text = { headers: ["year", "co2"], rows: Array.from({ length: 30 }, (_, i) => [`第${i}期`, "1"]) };
+    const { columns, report } = mergeColumns(d.columns, text, base.headers);
+    expect(columns.find((c) => c.key === "year")!.type).not.toBe("date");
+    expect(report.retyped[0]).toMatchObject({ label: "year", from: "date" });
+  });
+  it("never changes a type the user chose", () => {
+    const chosen = d.columns.map((c) => (c.key === "co2" ? { ...c, type: "category" as const } : c));
+    const { columns } = mergeColumns(chosen, base, base.headers);
+    expect(columns.find((c) => c.key === "co2")!.type).toBe("category");
+  });
+});
+
+describe("relative date presets", () => {
+  const days = (from: number, n: number) => Array.from({ length: n }, (_, i) => [new Date(Date.UTC(2020, 0, 1) + (from + i) * 86400000).toISOString().slice(0, 10), 1]);
+  const cols: ColumnMeta[] = [calc("Date", "Date", undefined, "date"), calc("ALL", "ALL", undefined, "number")];
+  const filter = { id: "f", column: "Date", kind: "range" as const, min: null, max: null, preset: "last-90" as const };
+  it("counts back from the latest date of the current data", () => {
+    const first = buildFrame({ headers: ["Date", "ALL"], rows: days(0, 600) }, cols);
+    expect(filterRows(first, [filter]).length).toBe(90);
+    const more = buildFrame({ headers: ["Date", "ALL"], rows: days(0, 1209) }, cols);
+    expect(filterRows(more, [filter]).length).toBe(90);
+  });
+});
+
+describe("dates from split columns", () => {
+  it("builds dates from year / month / day / hour columns and suggests them from headers", async () => {
+    const { suggestDateParts } = await import("./derive");
+    const data = { headers: ["現在時刻(年)", "現在時刻(月)", "現在時刻(日)", "現在時刻(時)", "気温"], rows: [[2026, "10", "21", 13, 20.1], [2026, "02", "30", 9, 3]] };
+    const base: ColumnMeta[] = [
+      { ...calc("現在時刻(年)", "現在時刻(年)", undefined, "date"), dateUnit: "year" },
+      calc("現在時刻(月)", "現在時刻(月)", undefined, "category"),
+      calc("現在時刻(日)", "現在時刻(日)", undefined, "category"),
+      calc("現在時刻(時)", "現在時刻(時)", undefined, "category"),
+      calc("気温", "気温", undefined, "number"),
+    ];
+    const parts = suggestDateParts(base)!;
+    expect(parts).toEqual({ year: "現在時刻(年)", month: "現在時刻(月)", day: "現在時刻(日)", hour: "現在時刻(時)", minute: null });
+    const frame = buildFrame(data, [...base, calc("calc:d", "日付", { kind: "datecompose", parts }, "date")]);
+    const v = frame.columns.get("calc:d")!.values as Float64Array;
+    expect(v[0]).toBe(Date.UTC(2026, 9, 21, 13));
+    expect(Number.isNaN(v[1])).toBe(true);
+  });
+});
+
+describe("wide tables", () => {
+  it("draws one series per numeric column", async () => {
+    const { timeSeriesColumns } = await import("./aggregate");
+    const data = { headers: ["Date", "Tokyo", "Osaka"], rows: [["2025-01-01", 10, 4], ["2025-01-02", 12, 5], ["2025-02-01", 7, 3]] };
+    const cols: ColumnMeta[] = [calc("Date", "Date", undefined, "date"), calc("Tokyo", "Tokyo", undefined, "number"), calc("Osaka", "Osaka", undefined, "number")];
+    const frame = buildFrame(data, cols);
+    const r = timeSeriesColumns(frame, filterRows(frame, []), "Date", "month", "sum", ["Tokyo", "Osaka"], (k) => k);
+    expect(r.series.map((x) => [x.label, x.values])).toEqual([["Tokyo", [22, 7]], ["Osaka", [9, 3]]]);
   });
 });

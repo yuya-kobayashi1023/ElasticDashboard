@@ -54,8 +54,24 @@ describe("inferColumn", () => {
     const r = inferColumn("注文ID", ids);
     expect(r.idLike).toBe(true);
   });
-  it("treats year numbers as category", () => {
-    expect(inferColumn("年度", [2023, 2024, 2023, 2025]).type).toBe("category");
+  it("treats year numbers as yearly dates", () => {
+    expect(inferColumn("年度", [2023, 2024, 2023, 2025])).toMatchObject({ type: "date", dateUnit: "year" });
+    expect(inferColumn("year", Array.from({ length: 300 }, (_, i) => 1750 + (i % 274)))).toMatchObject({ type: "date", dateUnit: "year" });
+  });
+  it("treats unique fixed-width numbers as codes", () => {
+    const codes = Array.from({ length: 60 }, (_, i) => 11001 + i * 37);
+    expect(inferColumn("列1", codes).idLike).toBe(true);
+    const amounts = Array.from({ length: 60 }, (_, i) => 1200 + i * 937);
+    expect(inferColumn("列2", amounts).idLike).toBe(false);
+  });
+    it("treats NA and similar markers as blank", () => {
+    expect(inferColumn("bill_length_mm", ["39.1", "NA", "40.3", "36.7"]).type).toBe("number");
+    expect(parseNumber("NA")).toBeNaN();
+  });
+  it("treats split timestamp parts as labels, but keeps minute durations as numbers", () => {
+    expect(inferColumn("現在時刻(月)", [10, 10, 10, 10]).type).toBe("category");
+    expect(inferColumn("初回応答(分)", [12, 30, 8, 45]).type).toBe("number");
+    expect(inferColumn("品質情報", [8, 8, 5, 8]).idLike).toBe(true);
   });
   it("detects dates", () => {
     expect(inferColumn("日付", ["2025/01/01", "2025/01/02", null]).type).toBe("date");
@@ -91,6 +107,18 @@ describe("parse", () => {
   it("handles hundreds of thousands of rows", () => {
     const grid = [["a", "b"], ...Array.from({ length: 300000 }, (_, i) => [String(i), "x"])];
     expect(normalizeGrid(grid, null).table.rows).toHaveLength(300000);
+  });
+    it("detects files without a header row even when they contain text columns", () => {
+    const holidays = parseDelimited("1955/1/1,元日\n1955/1/15,成人の日\n1955/3/21,春分の日\n1955/4/29,天皇誕生日");
+    expect(holidays.table.headers).toEqual(["列1", "列2"]);
+    expect(holidays.table.rows).toHaveLength(4);
+    expect(holidays.notes).toContain("見出し行が見つからないため、列名を自動で付けました");
+    const stations = parseDelimited("11001,北海道宗谷地方,稚内,12.3\n11016,北海道宗谷地方,稚内空港,13.1\n12011,北海道上川地方,旭川,15.2\n14163,北海道石狩地方,札幌,16.0");
+    expect(stations.table.rows).toHaveLength(4);
+  });
+  it("keeps real headers, including year headers of wide tables", () => {
+    expect(parseDelimited("日付,名称\n1955/1/1,元日\n1955/1/15,成人の日\n1955/3/21,春分の日").table.headers).toEqual(["日付", "名称"]);
+    expect(parseDelimited("地域,2022,2023\n関東,10,12\n近畿,8,9\n九州,5,6").table.headers).toEqual(["地域", "2022", "2023"]);
   });
     it("auto-detects tab delimiter", () => {
     expect(parseDelimited("a\tb\n1\t2").table.headers).toEqual(["a", "b"]);
@@ -151,7 +179,7 @@ describe("dashboard generation and aggregation", () => {
     const next = { headers: [...raw.headers.filter((h) => h !== "担当者"), "新列"], rows: [] };
     const { columns, report } = mergeColumns(edited, next);
     expect(columns.find((c) => c.key === "地域")).toMatchObject({ label: "エリア", hidden: true });
-    expect(report).toEqual({ added: ["新列"], missing: ["担当者"] });
+    expect(report).toEqual({ added: ["新列"], missing: ["担当者"], retyped: [] });
   });
 });
 
@@ -161,5 +189,13 @@ describe("measure priority", () => {
     const dash = createDashboard(raw, { fileName: "s.csv", sheetName: null, importedAt: 0 }, "s", { withWidgets: true });
     const time = dash.widgets.find((w) => w.kind === "time");
     expect(time && time.kind === "time" && time.measure.column).toBe("売上金額");
+  });
+});
+
+describe("dashboard names", () => {
+  it("numbers duplicates", async () => {
+    const { uniqueName } = await import("../app/store");
+    expect(uniqueName("売上", [])).toBe("売上");
+    expect(uniqueName("売上", [{ name: "売上" }, { name: "売上 (2)" }])).toBe("売上 (3)");
   });
 });

@@ -18,6 +18,7 @@ export async function readDataFile(file: File): Promise<ParseResult> {
       worker.postMessage({ name: file.name, buffer }, [buffer]);
     });
     if (!res.ok) throw new Error(res.message);
+    res.result.sheets.forEach((s, i) => (s.table.rows = JSON.parse(res.rows[i])));
     return res.result;
   } finally {
     worker.terminate();

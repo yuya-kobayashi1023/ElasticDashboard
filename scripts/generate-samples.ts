@@ -112,6 +112,16 @@ function salesStaff() {
   ];
 }
 
+/** Monthly targets per person: joins on 担当者 + 年月 (a composite key). */
+function salesTargets() {
+  const r = rng(1500);
+  const rows: (string | number)[][] = [["担当者", "年月", "目標金額"]];
+  for (const name of ["佐藤", "鈴木", "高橋", "田中", "伊藤", "渡辺"]) {
+    for (const m of MONTHS) rows.push([name, `2025-${pad(m)}`, Math.round((4 + r() * 2 + (m === 12 ? 1.5 : 0)) * 10) * 100000]);
+  }
+  return rows;
+}
+
 // ---------- 2. Support inquiries (Shift_JIS CSV with title and total rows) ----------
 
 function inquiries(m: Month) {
@@ -246,4 +256,5 @@ for (const m of MONTHS) {
   writeExpenseBook(join(OUT, "経費精算", `経費精算_${tag}.xlsx`), m);
 }
 writeCsv(join(OUT, "売上", "担当者マスタ.csv"), salesStaff(), "utf8-bom");
+writeCsv(join(OUT, "売上", "月間目標.csv"), salesTargets(), "utf8-bom");
 console.log(`samples written to ${OUT}`);

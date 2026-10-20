@@ -16,11 +16,18 @@ function normalize(s: string): string {
   return s.normalize("NFKC").trim();
 }
 
+/** Markers that mean "no value" in exports from R, pandas, Excel and databases. */
+const MISSING_RE = /^(na|n\/a|#n\/a|nan|null|none|nil|-|—|―|－)$/i;
+
+export function isMissing(s: string): boolean {
+  return MISSING_RE.test(s);
+}
+
 export function parseNumberDetailed(v: RawCell): ParsedNumber | null {
   if (v === null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? { value: v, prefix: "", suffix: "", decimals: decimalsOf(v) } : null;
   let s = normalize(v);
-  if (s === "" || s === "-" || s === "—") return null;
+  if (s === "" || isMissing(s)) return null;
   let negative = false;
   // Japanese accounting notation (△ / ▲) and parenthesised negatives.
   if (/^[△▲]/.test(s)) {
@@ -97,19 +104,37 @@ export function cellToString(v: RawCell): string | null {
   if (v === null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : null;
   const s = v.trim();
-  return s === "" ? null : s;
+  return s === "" || isMissing(s) ? null : s;
+}
+
+/** Year-only values ("1750", 2023) as January 1st of that year. Only for columns already known to be dates. */
+function parseYear(v: RawCell): number {
+  const n = typeof v === "number" ? v : v !== null && /^\s*\d{4}\s*$/.test(v) ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= 1000 && n <= 2999 ? Date.UTC(n, 0, 1) : NaN;
+}
+
+/** Converts a value of a date column: full dates, plus bare years. */
+export function parseDateValue(v: RawCell): number {
+  const t = parseDate(v);
+  return Number.isNaN(t) ? parseYear(v) : t;
 }
 
 const ID_HEADER_RE = /(^|[^a-z])(id|code|no|zip|tel)$|^id[^a-z]|ＩＤ|番号|コード|郵便|電話|識別子|ナンバー/i;
 const YEAR_HEADER_RE = /年|year|fy/i;
+/** Parts of a timestamp split into columns: 現在時刻(月), 日, hour… Small integers here are labels, not amounts. */
+const DATEPART_HEADER_RE =
+  /(時刻|日時|日付|起日|年月日|date|time)\s*[(（](月|日|時|分|秒)[)）]$|^(月|日|時|分|秒|曜日)$|(^|[_\s])(month|day|hour|minute|second)$/i;
+/** Status and quality codes: numbers that must never be summed. */
+const CODE_HEADER_RE = /品質|フラグ|flag|状態コード|status.?code/i;
 // Values where a total is meaningless: ratios, prices, scores, durations and ages.
 const AVG_HEADER_RE =
-  /率|割合|単価|平均|価格|price|rate|ratio|score|評価|点数|満足|気温|温度|%|時間|[(（]分[)）]|[(（]秒[)）]|応答|日数|待ち|所要|リードタイム|年齢|\bduration\b|\btime\b|\bage\b/i;
+  /率|割合|単価|平均|価格|price|rate|ratio|score|評価|点数|満足|気温|温度|%|時間|[(（]分[)）]|[(（]秒[)）]|応答|日数|待ち|所要|リードタイム|年齢|\bduration\b|\btime\b|\bage\b|(^|[_\s(（])(mm|cm|km|g|kg|mg|lb|kcal|℃|°c)([)）\s]|$)|身長|体重|長さ|高さ|重さ|重量|面積|体積|気温|湿度|風速|気圧|濃度|密度|速度/i;
 
 export interface InferResult {
   type: ColumnType;
   idLike: boolean;
   format: NumberFormat;
+  dateUnit?: "year";
 }
 
 const EMPTY_FORMAT: NumberFormat = { prefix: "", suffix: "", decimals: null };
@@ -142,16 +167,26 @@ export function inferColumn(header: string, values: RawCell[]): InferResult {
 
   const nums = s.map(parseNumberDetailed);
   const numHits = nums.filter((n) => n !== null) as ParsedNumber[];
-  const leadingZeros = s.some((v) => typeof v === "string" && /^0\d+$/.test(v.trim()));
+  const leadingZeros = s.some((v) => typeof v === "string" && /^0\d+$/.test(v.trim())) && !DATEPART_HEADER_RE.test(header.trim());
   const distinct = new Set(nonEmpty.map((v) => cellToString(v))).size;
   const unique = distinct === nonEmpty.length && nonEmpty.length >= 20;
 
   if (numHits.length / s.length >= 0.95 && !leadingZeros) {
     const allInts = numHits.every((n) => Number.isInteger(n.value));
-    const yearLike =
-      allInts && YEAR_HEADER_RE.test(header) && numHits.every((n) => n.value >= 1900 && n.value <= 2100) && distinct <= 50;
-    if (yearLike) return { type: "category", idLike: false, format: EMPTY_FORMAT };
-    if (headerIsId || (unique && allInts && isSequential(numHits.map((n) => n.value)))) {
+    // Years are time, not amounts: never summed, and usable as the axis of a trend chart.
+    const yearLike = allInts && YEAR_HEADER_RE.test(header) && numHits.every((n) => n.value >= 1000 && n.value <= 2100);
+    if (yearLike) return { type: "date", idLike: false, format: EMPTY_FORMAT, dateUnit: "year" };
+    if (allInts && DATEPART_HEADER_RE.test(header.trim()) && numHits.every((n) => n.value >= 0 && n.value <= 60)) {
+      return { type: "category", idLike: false, format: EMPTY_FORMAT };
+    }
+    if (CODE_HEADER_RE.test(header)) return { type: "category", idLike: true, format: EMPTY_FORMAT };
+    // Unique integers of one fixed width (≥5 digits, no unit) are codes such as station numbers.
+    const fixedWidthCodes =
+      unique &&
+      allInts &&
+      nonEmpty.length >= 50 &&
+      numHits.every((n) => !n.prefix && !n.suffix && n.value >= 10000 && String(n.value).length === String(numHits[0].value).length);
+    if (headerIsId || fixedWidthCodes || (unique && allInts && isSequential(numHits.map((n) => n.value)))) {
       return { type: unique ? "text" : "category", idLike: true, format: EMPTY_FORMAT };
     }
     const prefix = mostCommon(numHits.map((n) => n.prefix));
@@ -198,6 +233,7 @@ export function inferColumns(headers: string[], rows: RawCell[][]): ColumnMeta[]
       hidden: false,
       idLike: r.idLike,
       format: r.format,
+      ...(r.dateUnit ? { dateUnit: r.dateUnit } : {}),
     };
   });
 }

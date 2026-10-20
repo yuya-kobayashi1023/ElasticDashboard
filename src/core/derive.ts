@@ -1,4 +1,5 @@
-import type { ColumnMeta, ColumnValues, DatePart, Lookup, RawCell } from "./types";
+import { parseDate } from "./infer";
+import type { ColumnMeta, ColumnValues, DatePart, DateParts, Lookup, RawCell } from "./types";
 
 // ---------- Formula columns ----------
 
@@ -233,10 +234,11 @@ export function datePart(t: number, part: DatePart): string | null {
 export function derivedSources(c: ColumnMeta, lookups: Lookup[] = []): string[] {
   if (!c.derived) return [];
   if (c.derived.kind === "datepart") return [c.derived.source];
+  if (c.derived.kind === "datecompose") return Object.values(c.derived.parts).filter((k): k is string => !!k);
   if (c.derived.kind === "lookup") {
     const id = c.derived.lookupId;
     const l = lookups.find((x) => x.id === id);
-    return l ? [l.localKey] : [];
+    return l ? lookupKeys(l).local : [];
   }
   try {
     return [...formulaRefs(parseFormula(c.derived.expr, (k) => k))];
@@ -247,6 +249,12 @@ export function derivedSources(c: ColumnMeta, lookups: Lookup[] = []): string[] 
 
 // ---------- Master lookups ----------
 
+/** Key columns of a lookup, accepting the single-key shape saved by older versions. */
+export function lookupKeys(l: Lookup): { master: string[]; local: string[] } {
+  if (l.masterKeys?.length && l.localKeys?.length) return { master: l.masterKeys, local: l.localKeys };
+  return { master: l.masterKey ? [l.masterKey] : [], local: l.localKey ? [l.localKey] : [] };
+}
+
 /** Normalizes join keys so "001", "1" and full-width digits match. */
 export function normalizeKey(v: RawCell | number | undefined): string | null {
   if (v === null || v === undefined) return null;
@@ -256,23 +264,48 @@ export function normalizeKey(v: RawCell | number | undefined): string | null {
   return /^-?\d+(\.0+)?$/.test(s) ? String(Number(s)) : s;
 }
 
-/** Key of each row in the dashboard data, from already-coerced column values. */
-export function localKeys(col: ColumnValues, rowCount: number): (string | null)[] {
+const SEP = "\u0001";
+
+/** Composite key of each row in the dashboard data, from already-coerced column values. A blank part gives no key. */
+export function rowKeys(cols: ColumnValues[], rowCount: number): (string | null)[] {
   const out: (string | null)[] = new Array(rowCount);
   for (let i = 0; i < rowCount; i++) {
-    const v = col.values[i];
-    out[i] = typeof v === "number" ? (Number.isNaN(v) ? null : normalizeKey(v)) : normalizeKey(v);
+    let key = "";
+    for (let c = 0; c < cols.length; c++) {
+      const col = cols[c];
+      const v = col.values[i];
+      const part = col.type === "date" ? dayKey(v as number) : typeof v === "number" ? (Number.isNaN(v) ? null : normalizeKey(v)) : normalizeKey(v);
+      if (part === null) {
+        key = "";
+        break;
+      }
+      key += (c ? SEP : "") + part;
+    }
+    out[i] = key === "" ? null : key;
   }
   return out;
 }
 
-/** Map from normalized master key to the master row (first occurrence wins). */
-export function masterIndex(l: Lookup): Map<string, number> {
-  const k = l.table.headers.indexOf(l.masterKey);
+/** Dates match by calendar day, however they are written ("2025/10/01", "2025-10-01", Excel dates). */
+function dayKey(t: number): string | null {
+  if (Number.isNaN(t)) return null;
+  const d = new Date(t);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Map from normalized master key to the master row (first occurrence wins).
+ * `dateKeys[i]` marks key parts whose local column is a date, so master cells are read as dates.
+ */
+export function masterIndex(l: Lookup, dateKeys: boolean[] = []): Map<string, number> {
+  const idx = lookupKeys(l).master.map((h) => l.table.headers.indexOf(h));
   const index = new Map<string, number>();
+  if (idx.some((i) => i < 0)) return index;
   l.table.rows.forEach((r, i) => {
-    const key = normalizeKey(r[k] ?? null);
-    if (key !== null && !index.has(key)) index.set(key, i);
+    const parts = idx.map((k, p) => (dateKeys[p] ? dayKey(parseDate(r[k] ?? null)) : normalizeKey(r[k] ?? null)));
+    if (parts.some((p) => p === null)) return;
+    const key = parts.join(SEP);
+    if (!index.has(key)) index.set(key, i);
   });
   return index;
 }
@@ -280,7 +313,7 @@ export function masterIndex(l: Lookup): Map<string, number> {
 export interface MatchReport {
   matched: number;
   total: number;
-  /** A few local key values with no master row. */
+  /** A few key values with no master row (composite parts joined by " / "). */
   unmatched: string[];
 }
 
@@ -292,7 +325,7 @@ export function matchReport(keys: (string | null)[], index: Map<string, number>)
     if (k === null) continue;
     total++;
     if (index.has(k)) matched++;
-    else if (unmatched.size < 5) unmatched.add(k);
+    else if (unmatched.size < 5) unmatched.add(k.split(SEP).join(" / "));
   }
   return { matched, total, unmatched: [...unmatched] };
 }
@@ -304,7 +337,65 @@ export function describeDerived(c: ColumnMeta, columns: ColumnMeta[], lookups: L
   const label = (k: string) => columns.find((x) => x.key === k)?.label ?? k;
   if (d.kind === "formula") return `= ${displayFormula(d.expr, columns)}`;
   if (d.kind === "datepart") return `${label(d.source)}の${DATE_PART_LABEL[d.part]}`;
+  if (d.kind === "datecompose") return `${Object.values(d.parts).filter((k): k is string => !!k).map(label).join(" + ")} から作った日付`;
   const id = d.lookupId;
   const l = lookups.find((x) => x.id === id);
-  return l ? `「${l.fileName}」の${d.column}（${label(l.localKey)}で結合）` : "結合したマスタが見つかりません";
+  return l ? `「${l.fileName}」の${d.column}（${lookupKeys(l).local.map(label).join(" + ")}で結合）` : "結合したマスタが見つかりません";
+}
+
+// ---------- Dates from split columns ----------
+
+/** Numeric value of a part column: numbers, digit labels ("08") or the year of a yearly date column. */
+function partValue(col: ColumnValues, i: number): number {
+  const v = col.values[i];
+  if (col.type === "date") return Number.isNaN(v as number) ? NaN : new Date(v as number).getUTCFullYear();
+  if (typeof v === "number") return v;
+  return v === null ? NaN : Number(v.normalize("NFKC").trim());
+}
+
+/** Builds UTC timestamps from year / month / day / hour / minute columns. Invalid combinations become blank. */
+export function composeDates(parts: DateParts, values: Map<string, ColumnValues>, rowCount: number): Float64Array {
+  const get = (k: string | null) => {
+    if (!k) return null;
+    const col = values.get(k);
+    if (!col) throw new FormulaError(`列「${k}」がデータにありません`);
+    return col;
+  };
+  const [y, mo, d, h, mi] = [get(parts.year), get(parts.month), get(parts.day), get(parts.hour), get(parts.minute)];
+  if (!y) throw new FormulaError("年の列を選んでください");
+  const out = new Float64Array(rowCount);
+  for (let i = 0; i < rowCount; i++) {
+    const year = partValue(y, i);
+    const month = mo ? partValue(mo, i) : 1;
+    const day = d ? partValue(d, i) : 1;
+    const hour = h ? partValue(h, i) : 0;
+    const minute = mi ? partValue(mi, i) : 0;
+    const t = Date.UTC(year, month - 1, day, hour, minute);
+    const dt = new Date(t);
+    const valid =
+      Number.isInteger(year) && Number.isInteger(month) && Number.isInteger(day) && dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day && hour >= 0 && hour < 24 && minute >= 0 && minute < 60;
+    out[i] = valid ? t : NaN;
+  }
+  return out;
+}
+
+const PART_HINTS: Record<keyof DateParts, RegExp> = {
+  year: /[(（]年[)）]$|^年$|year$/i,
+  month: /[(（]月[)）]$|^月$|month$/i,
+  day: /[(（]日[)）]$|^日$|day$/i,
+  hour: /[(（]時[)）]$|^時$|hour$/i,
+  minute: /[(（]分[)）]$|^分$|minute$/i,
+};
+
+/** Suggests part columns from headers such as 現在時刻(年) / 現在時刻(月) …, preferring one shared prefix. */
+export function suggestDateParts(columns: ColumnMeta[]): DateParts | null {
+  const years = columns.filter((c) => PART_HINTS.year.test(c.label));
+  for (const y of years) {
+    const prefix = y.label.replace(PART_HINTS.year, "");
+    const find = (k: keyof DateParts) =>
+      columns.find((c) => c.label.startsWith(prefix) && PART_HINTS[k].test(c.label) && c.key !== y.key)?.key ?? null;
+    const parts = { year: y.key, month: find("month"), day: find("day"), hour: find("hour"), minute: find("minute") };
+    if (parts.month) return parts;
+  }
+  return null;
 }

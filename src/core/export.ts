@@ -1,4 +1,4 @@
-import { derivedSources } from "./derive";
+import { derivedSources, lookupKeys } from "./derive";
 import { GZIP_LOADER, gzipBase64 } from "./gzip";
 import type { ExportPayload } from "./exportFormat";
 import type { Dashboard, Lookup, RawTable } from "./types";
@@ -25,6 +25,7 @@ export function usedColumns(d: Dashboard): Set<string> {
         used.add(w.dateColumn);
         if (w.split) used.add(w.split);
         if (w.measure.column) used.add(w.measure.column);
+        for (const k of w.series ?? []) used.add(k);
         break;
       case "histogram":
         used.add(w.column);
@@ -81,7 +82,7 @@ function pruneLookups(d: Dashboard, included: Set<string>): Lookup[] | undefined
         .filter((c) => c.derived?.kind === "lookup" && c.derived.lookupId === l.id && included.has(c.key))
         .map((c) => (c.derived as { column: string }).column);
       if (cols.length === 0) return null;
-      const keep = [l.masterKey, ...cols].map((h) => l.table.headers.indexOf(h)).filter((i) => i >= 0);
+      const keep = [...lookupKeys(l).master, ...cols].map((h) => l.table.headers.indexOf(h)).filter((i) => i >= 0);
       return { ...l, table: { headers: keep.map((i) => l.table.headers[i]), rows: l.table.rows.map((r) => keep.map((i) => r[i] ?? null)) } };
     })
     .filter((l): l is Lookup => l !== null);

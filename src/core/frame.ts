@@ -1,21 +1,43 @@
-import { datePart, evaluateFormula, FormulaError, localKeys, masterIndex } from "./derive";
-import { cellToString, parseDate, parseNumber } from "./infer";
+import { composeDates, datePart, evaluateFormula, FormulaError, lookupKeys, masterIndex, rowKeys } from "./derive";
+import { cellToString, parseDateValue, parseNumber } from "./infer";
 import type { ColumnMeta, ColumnType, ColumnValues, Frame, Lookup, RawTable } from "./types";
 
-export function coerceColumn(raw: RawTable, index: number, type: ColumnType): ColumnValues {
+/** Rows processed between yields when building a frame without blocking the page. */
+const CHUNK = 20000;
+
+type Steps<T> = Generator<void, T, void>;
+
+function runSync<T>(it: Steps<T>): T {
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+  }
+}
+
+function* coerceSteps(raw: RawTable, index: number, type: ColumnType): Steps<ColumnValues> {
   const n = raw.rows.length;
   if (type === "number" || type === "date") {
     const values = new Float64Array(n);
-    const fn = type === "number" ? parseNumber : parseDate;
-    for (let i = 0; i < n; i++) values[i] = fn(raw.rows[i][index] ?? null);
+    const fn = type === "number" ? parseNumber : parseDateValue;
+    for (let i = 0; i < n; i++) {
+      if (i && i % CHUNK === 0) yield;
+      values[i] = fn(raw.rows[i][index] ?? null);
+    }
     return { type, values };
   }
   const values: (string | null)[] = new Array(n);
-  for (let i = 0; i < n; i++) values[i] = cellToString(raw.rows[i][index] ?? null);
+  for (let i = 0; i < n; i++) {
+    if (i && i % CHUNK === 0) yield;
+    values[i] = cellToString(raw.rows[i][index] ?? null);
+  }
   return { type, values };
 }
 
-export function buildFrame(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[] = []): Frame {
+export function coerceColumn(raw: RawTable, index: number, type: ColumnType): ColumnValues {
+  return runSync(coerceSteps(raw, index, type));
+}
+
+function* frameSteps(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[]): Steps<Frame> {
   const indexByKey = new Map(raw.headers.map((h, i) => [h, i]));
   const values = new Map<string, ColumnValues>();
   const meta = new Map<string, ColumnMeta>();
@@ -25,28 +47,31 @@ export function buildFrame(raw: RawTable, columns: ColumnMeta[], lookups: Lookup
     if (col.derived) continue;
     const idx = indexByKey.get(col.key);
     if (idx === undefined) continue;
-    values.set(col.key, coerceColumn(raw, idx, col.type));
+    values.set(col.key, yield* coerceSteps(raw, idx, col.type));
     meta.set(col.key, col);
   }
   // Calculated columns run in list order, so later ones may use earlier ones.
   for (const col of columns) {
     const d = col.derived;
     if (!d) continue;
+    yield;
     try {
       if (d.kind === "formula") {
         values.set(col.key, { type: "number", values: evaluateFormula(d.expr, values, n) });
+      } else if (d.kind === "datecompose") {
+        values.set(col.key, { type: "date", values: composeDates(d.parts, values, n) });
       } else if (d.kind === "lookup") {
         const l = lookups.find((x) => x.id === d.lookupId);
         if (!l) throw new FormulaError("結合したマスタが見つかりません");
-        const src = values.get(l.localKey);
-        if (!src) throw new FormulaError("結合に使う列がデータにありません");
+        const srcs = lookupKeys(l).local.map((k) => values.get(k));
+        if (srcs.length === 0 || srcs.some((x) => !x)) throw new FormulaError("結合に使う列がデータにありません");
         const ci = l.table.headers.indexOf(d.column);
         if (ci < 0) throw new FormulaError(`マスタに「${d.column}」列がありません`);
-        const index = masterIndex(l);
-        const keys = localKeys(src, n);
+        const index = masterIndex(l, (srcs as ColumnValues[]).map((x) => x.type === "date"));
+        const keys = rowKeys(srcs as ColumnValues[], n);
         // Build a one-column table of looked-up raw cells, then coerce it like a file column.
         const cells = { headers: [col.key], rows: keys.map((k) => [k === null ? null : (l.table.rows[index.get(k) ?? -1]?.[ci] ?? null)]) };
-        values.set(col.key, coerceColumn(cells, 0, col.type));
+        values.set(col.key, yield* coerceSteps(cells, 0, col.type));
       } else {
         const src = values.get(d.source);
         if (!src) throw new FormulaError("元の日付列がデータにありません");
@@ -61,6 +86,28 @@ export function buildFrame(raw: RawTable, columns: ColumnMeta[], lookups: Lookup
     }
   }
   return { rowCount: n, columns: values, meta, errors };
+}
+
+export function buildFrame(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[] = []): Frame {
+  return runSync(frameSteps(raw, columns, lookups));
+}
+
+/**
+ * Same result as buildFrame, but gives the page back every ~30 ms so large data never freezes the UI.
+ * Resolves to null when `signal.cancelled` is set (a newer build replaced this one).
+ */
+export async function buildFrameAsync(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[], signal: { cancelled: boolean }): Promise<Frame | null> {
+  const it = frameSteps(raw, columns, lookups);
+  let start = performance.now();
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+    if (performance.now() - start > 30) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (signal.cancelled) return null;
+      start = performance.now();
+    }
+  }
 }
 
 export interface ColumnStats {
@@ -90,4 +137,54 @@ export function columnStats(raw: RawTable, col: ColumnMeta): ColumnStats {
     if ((coerced.type === "number" || coerced.type === "date") && Number.isNaN(coerced.values[i])) invalid++;
   }
   return { blank, distinct: distinct.size, invalid, samples };
+}
+
+/**
+ * Statistics for the column settings screen, computed from an already built frame (no re-conversion)
+ * and in time slices so wide, large tables do not freeze the page. Resolves to null when cancelled.
+ */
+export async function columnStatsAsync(
+  raw: RawTable,
+  columns: ColumnMeta[],
+  frame: Frame,
+  format: (v: number, c: ColumnMeta) => string,
+  signal: { cancelled: boolean },
+): Promise<Map<string, ColumnStats> | null> {
+  const out = new Map<string, ColumnStats>();
+  const indexByKey = new Map(raw.headers.map((h, i) => [h, i]));
+  let start = performance.now();
+  const pause = async () => {
+    if (performance.now() - start < 30) return false;
+    await new Promise((r) => setTimeout(r, 0));
+    start = performance.now();
+    return signal.cancelled;
+  };
+  for (const c of columns) {
+    const col = frame.columns.get(c.key);
+    const idx = indexByKey.get(c.key);
+    let blank = 0;
+    let invalid = 0;
+    const distinct = new Set<string>();
+    const samples: string[] = [];
+    for (let i = 0; i < frame.rowCount; i++) {
+      if (i % 5000 === 0 && (await pause())) return null;
+      let text: string | null;
+      if (c.derived || idx === undefined) {
+        if (!col) break;
+        const v = col.values[i];
+        text = typeof v === "number" ? (Number.isNaN(v) ? null : format(v, c)) : v;
+      } else {
+        text = cellToString(raw.rows[i][idx] ?? null);
+        if (text !== null && col && (col.type === "number" || col.type === "date") && Number.isNaN(col.values[i])) invalid++;
+      }
+      if (text === null) {
+        blank++;
+        continue;
+      }
+      if (distinct.size < 100000) distinct.add(text);
+      if (samples.length < 3 && !samples.includes(text)) samples.push(text);
+    }
+    out.set(c.key, { blank, distinct: distinct.size, invalid, samples });
+  }
+  return out;
 }

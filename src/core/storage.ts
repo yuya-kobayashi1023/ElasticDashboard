@@ -18,9 +18,17 @@ async function writeIndex(update: (list: DashboardSummary[]) => DashboardSummary
   return next;
 }
 
+/**
+ * Rows are stored as a JSON string: IndexedDB copies a string far faster than a deep structured clone
+ * of hundreds of thousands of small arrays, which would freeze the page while saving or opening.
+ */
+type StoredRaw = RawTable | { json: string };
+
 export async function loadDashboard(id: string): Promise<{ dashboard: Dashboard; raw: RawTable } | null> {
-  const [dashboard, raw] = await Promise.all([get<Dashboard>(`dash:${id}`, store), get<RawTable>(`rows:${id}`, store)]);
-  return dashboard && raw ? { dashboard, raw } : null;
+  const [dashboard, stored] = await Promise.all([get<Dashboard>(`dash:${id}`, store), get<StoredRaw>(`rows:${id}`, store)]);
+  if (!dashboard || !stored) return null;
+  const raw = "json" in stored ? (JSON.parse(stored.json) as RawTable) : stored;
+  return { dashboard, raw };
 }
 
 export async function saveDashboard(d: Dashboard): Promise<DashboardSummary[]> {
@@ -29,7 +37,7 @@ export async function saveDashboard(d: Dashboard): Promise<DashboardSummary[]> {
 }
 
 export async function saveRaw(id: string, raw: RawTable): Promise<void> {
-  await set(`rows:${id}`, raw, store);
+  await set(`rows:${id}`, { json: JSON.stringify(raw) } satisfies StoredRaw, store);
 }
 
 export async function deleteDashboard(id: string): Promise<DashboardSummary[]> {

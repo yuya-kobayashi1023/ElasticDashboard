@@ -43,6 +43,15 @@ interface State {
 }
 
 const LAST_KEY = "elastic-dashboard:last";
+
+/** "売上" → "売上 (2)" when a dashboard with that name already exists, so the sidebar can tell them apart. */
+export function uniqueName(name: string, list: { name: string }[]): string {
+  const taken = new Set(list.map((d) => d.name));
+  if (!taken.has(name)) return name;
+  let n = 2;
+  while (taken.has(`${name} (${n})`)) n++;
+  return `${name} (${n})`;
+}
 const HISTORY_LIMIT = 100;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let lastCoalesce: { key: string; at: number } | null = null;
@@ -128,7 +137,7 @@ export const useApp = create<State>((set, get) => {
     },
 
     async create(raw, source, name, prepared) {
-      const dashboard = createDashboard(raw, source, name, { prepared });
+      const dashboard = createDashboard(raw, source, uniqueName(name, get().list), { prepared });
       await storage.saveRaw(dashboard.id, raw);
       const list = await storage.saveDashboard(dashboard);
       remember(dashboard.id);
@@ -167,7 +176,7 @@ export const useApp = create<State>((set, get) => {
 
     async replaceData(raw, source, inferred) {
       const d = get().dashboard;
-      if (!d) return { added: [], missing: [] };
+      if (!d) return { added: [], missing: [], retyped: [] };
       const { columns, report } = mergeColumns(d.columns, raw, get().raw?.headers, inferred);
       const prevRaw = get().raw ?? undefined;
       await storage.saveRaw(d.id, raw);
@@ -179,19 +188,17 @@ export const useApp = create<State>((set, get) => {
     async appendData(raw, fileName, inferred) {
       const d = get().dashboard;
       const prev = get().raw;
-      if (!d || !prev) return { added: [], missing: [], rows: 0, duplicates: 0 };
+      if (!d || !prev) return { added: [], missing: [], retyped: [], rows: 0, duplicates: 0 };
       const duplicates = countDuplicateRows(prev, raw);
       const merged = appendRows(prev, raw);
-      // New columns take their type from the appended file; existing columns keep their settings.
-      const byHeader = new Map((inferred ?? []).map((c) => [c.key, c]));
-      const pre = inferred ? merged.headers.map((h) => byHeader.get(h) ?? d.columns.find((c) => c.key === h)) : undefined;
-      const { columns, report } = mergeColumns(d.columns, merged, prev.headers, pre?.every(Boolean) ? (pre as ColumnMeta[]) : undefined);
+      // New columns take their type from the appended file; existing ones keep theirs while the values fit.
+      const { columns, report } = mergeColumns(d.columns, merged, prev.headers, inferred);
       await storage.saveRaw(d.id, merged);
       set({ raw: merged });
       const source = { ...d.source, appended: [...(d.source.appended ?? []), fileName], rowCount: merged.rows.length, importedAt: Date.now() };
       commit({ ...d, columns, source }, true, undefined, prev);
       const present = new Set(raw.headers);
-      return { added: report.added, missing: prev.headers.filter((h) => !present.has(h)), rows: raw.rows.length, duplicates };
+      return { added: report.added, missing: prev.headers.filter((h) => !present.has(h)), retyped: report.retyped, rows: raw.rows.length, duplicates };
     },
 
     async createFrom(config, raw, source, inferred) {
@@ -199,6 +206,7 @@ export const useApp = create<State>((set, get) => {
       const now = Date.now();
       const dashboard: Dashboard = {
         ...structuredClone(config),
+        name: uniqueName(config.name, get().list),
         id: newId(),
         createdAt: now,
         updatedAt: now,

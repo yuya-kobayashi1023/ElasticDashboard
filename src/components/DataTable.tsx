@@ -48,7 +48,7 @@ export function DataTable({ frame, rows, columns, pageSize }: Props) {
     const col = frame.columns.get(c.key);
     if (!col) return null;
     if (col.type === "number") return Number.isNaN(col.values[i]) ? null : formatNumber(col.values[i], c);
-    if (col.type === "date") return Number.isNaN(col.values[i]) ? null : formatDate(col.values[i], "datetime");
+    if (col.type === "date") return Number.isNaN(col.values[i]) ? null : formatDate(col.values[i], c.dateUnit === "year" ? "year" : "datetime");
     return col.values[i];
   };
 

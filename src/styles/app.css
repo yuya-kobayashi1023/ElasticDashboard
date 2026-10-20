@@ -1129,3 +1129,60 @@
   flex: none;
   margin-top: 3px;
 }
+.key-pairs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px var(--sp-1);
+}
+.key-pair {
+  display: contents;
+}
+.key-pairs-head {
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+}
+.lookup-list {
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.lookup-list-title {
+  margin-bottom: var(--sp-1);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.lookup-list ul {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lookup-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--sp-1);
+}
+.lookup-name {
+  font-weight: 500;
+}
+.lookup-meta {
+  flex: 1;
+  min-width: 200px;
+  font-size: 13px;
+}
+.lookup-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.compose-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-2);
+}

@@ -4,7 +4,7 @@ import { inferColumns } from "./infer";
 import { ParseError, parseFile, type ParseResult } from "./parse";
 
 export type WorkerRequest = { name: string; buffer: ArrayBuffer };
-export type WorkerResponse = { ok: true; result: ParseResult } | { ok: false; message: string };
+export type WorkerResponse = { ok: true; result: ParseResult; rows: string[] } | { ok: false; message: string };
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   let res: WorkerResponse;
@@ -14,7 +14,10 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       const columns = inferColumns(sheet.table.headers, sheet.table.rows);
       sheet.prepared = { columns, filters: autoFilters(columns, buildFrame(sheet.table, columns)) };
     }
-    res = { ok: true, result };
+    // Send rows as one JSON string: copying a string to the page is cheap, a deep clone of many arrays is not.
+    const rows = result.sheets.map((s) => JSON.stringify(s.table.rows));
+    for (const s of result.sheets) s.table = { headers: s.table.headers, rows: [] };
+    res = { ok: true, result, rows };
   } catch (err) {
     res = {
       ok: false,

@@ -603,12 +603,19 @@ textarea {
   cursor: pointer;
 }
 .filter-chip-main .chip-name {
+  flex: 0 1 auto;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-secondary);
 }
 .filter-chip.is-active .chip-name {
   color: var(--text-primary);
 }
 .filter-chip-main .chip-value {
+  flex: 0 1 auto;
+  min-width: 2.5em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

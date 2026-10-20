@@ -27,7 +27,7 @@ const TABS: { id: View; label: string }[] = [
 export function DashboardPage() {
   const { dashboard, raw, view, setView, update, setFilters, undo, redo, past, future, saveState, remove } = useApp();
   const d = dashboard!;
-  const { frame, rows } = useDashboardData(raw!, d.columns, d.filters, d.lookups);
+  const { frame, rows, computing } = useDashboardData(raw!, d.columns, d.filters, d.lookups);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -49,6 +49,7 @@ export function DashboardPage() {
   );
 
   const autoLayout = () => {
+    if (!frame) return;
     update((x) => ({ ...x, widgets: autoWidgets(x.columns, frame) }));
     useToasts.getState().push({
       tone: "success",
@@ -58,6 +59,7 @@ export function DashboardPage() {
   };
 
   const addWidget = () => {
+    if (!frame) return;
     const w = defaultWidget("bar", d.columns, frame);
     update((x) => ({ ...x, widgets: [...x.widgets, w] }));
     setEditingId(w.id);
@@ -198,7 +200,18 @@ export function DashboardPage() {
       </div>
 
       <div id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`} className="tab-panel">
-        {view === "dashboard" ? (
+        {computing && frame && (
+          <div className="busy-banner" role="status">
+            <span className="spinner" aria-hidden />
+            集計し直しています…
+          </div>
+        )}
+        {view === "dashboard" && !frame ? (
+          <div className="empty-dash" role="status">
+            <span className="spinner" aria-hidden />
+            <p>{count.format(raw!.rows.length)} 行を集計しています…</p>
+          </div>
+        ) : view === "dashboard" && frame ? (
           <>
             <FilterBar frame={frame} filters={filters} filteredCount={rows.length} onChange={setFilters} />
             {d.widgets.length === 0 ? (
@@ -220,11 +233,11 @@ export function DashboardPage() {
             )}
           </>
         ) : (
-          <ColumnSettings raw={raw!} />
+          <ColumnSettings raw={raw!} frame={frame} />
         )}
       </div>
 
-      <WidgetEditor widgetId={editingId} frame={frame} onClose={() => setEditingId(null)} />
+      {frame && <WidgetEditor widgetId={editingId} frame={frame} onClose={() => setEditingId(null)} />}
       <DesignPanel open={designOpen} onClose={() => setDesignOpen(false)} />
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} raw={raw!} />
       <Dialog
