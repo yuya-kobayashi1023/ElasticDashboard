@@ -92,6 +92,18 @@ describe("parse", () => {
     const grid = [["a", "b"], ...Array.from({ length: 300000 }, (_, i) => [String(i), "x"])];
     expect(normalizeGrid(grid, null).table.rows).toHaveLength(300000);
   });
+    it("detects files without a header row even when they contain text columns", () => {
+    const holidays = parseDelimited("1955/1/1,元日\n1955/1/15,成人の日\n1955/3/21,春分の日\n1955/4/29,天皇誕生日");
+    expect(holidays.table.headers).toEqual(["列1", "列2"]);
+    expect(holidays.table.rows).toHaveLength(4);
+    expect(holidays.notes).toContain("見出し行が見つからないため、列名を自動で付けました");
+    const stations = parseDelimited("11001,北海道宗谷地方,稚内,12.3\n11016,北海道宗谷地方,稚内空港,13.1\n12011,北海道上川地方,旭川,15.2\n14163,北海道石狩地方,札幌,16.0");
+    expect(stations.table.rows).toHaveLength(4);
+  });
+  it("keeps real headers, including year headers of wide tables", () => {
+    expect(parseDelimited("日付,名称\n1955/1/1,元日\n1955/1/15,成人の日\n1955/3/21,春分の日").table.headers).toEqual(["日付", "名称"]);
+    expect(parseDelimited("地域,2022,2023\n関東,10,12\n近畿,8,9\n九州,5,6").table.headers).toEqual(["地域", "2022", "2023"]);
+  });
     it("auto-detects tab delimiter", () => {
     expect(parseDelimited("a\tb\n1\t2").table.headers).toEqual(["a", "b"]);
   });

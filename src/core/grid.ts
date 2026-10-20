@@ -30,6 +30,31 @@ export function parseDelimited(text: string): ParsedSheet {
 }
 
 const isEmpty = (c: RawCell) => c === null || (typeof c === "string" && c.trim() === "");
+const isTyped = (c: RawCell) => typeof c === "number" || (c !== null && (!Number.isNaN(parseNumber(c)) || !Number.isNaN(parseDate(c))));
+const isYear = (c: RawCell) => {
+  const n = typeof c === "number" ? c : parseNumber(c);
+  return Number.isInteger(n) && n >= 1900 && n <= 2100;
+};
+
+/**
+ * Decides column by column whether the first row is data rather than a header. Columns whose body is
+ * numbers or dates give the evidence: a typed first cell there means data, a text cell means header.
+ * Text-only columns say nothing. Year-like headers over non-year values ("2023" columns in a wide
+ * table) count as headers.
+ */
+function firstRowIsData(first: RawCell[], body: RawCell[][], width: number): boolean {
+  let data = 0;
+  let header = 0;
+  for (let c = 0; c < width; c++) {
+    const vals = body.map((r) => r[c] ?? null).filter((v) => !isEmpty(v));
+    if (vals.length < 3 || vals.filter(isTyped).length / vals.length < 0.9) continue;
+    const h = first[c] ?? null;
+    if (isEmpty(h)) continue;
+    if (isTyped(h) && !(isYear(h) && !vals.every(isYear))) data++;
+    else header++;
+  }
+  return data > 0 && header === 0;
+}
 const SUMMARY_RE = /^(合計|総計|小計|計|総合計|total|grand total|sum|subtotal)$/i;
 
 /**
@@ -54,7 +79,7 @@ export function normalizeGrid(input: RawCell[][], name: string | null): ParsedSh
   const nonEmptyHeader = headerRow.filter((c) => !isEmpty(c));
   const headerLooksLikeData =
     nonEmptyHeader.length > 0 &&
-    nonEmptyHeader.every((c) => typeof c === "number" || !Number.isNaN(parseNumber(c)) || !Number.isNaN(parseDate(c)));
+    (nonEmptyHeader.every(isTyped) || firstRowIsData(headerRow, grid.slice(headerIndex + 1, headerIndex + 51), width));
 
   const body = headerLooksLikeData ? grid.slice(headerIndex) : grid.slice(headerIndex + 1);
   if (headerLooksLikeData) notes.push("見出し行が見つからないため、列名を自動で付けました");
