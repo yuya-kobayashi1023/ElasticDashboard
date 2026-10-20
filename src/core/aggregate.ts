@@ -1,3 +1,4 @@
+import { isFilterActive, presetRange } from "./filters";
 import type { Agg, BarSort, Filter, Frame, Measure, TimeBucket } from "./types";
 
 export const BLANK_LABEL = "(空欄)";
@@ -6,7 +7,7 @@ export const OTHER_LABEL = "その他";
 export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: string): Uint32Array {
   const active = filters.filter((f) => {
     if (f.id === skipFilterId || !frame.columns.has(f.column)) return false;
-    return f.kind === "values" ? f.values.length > 0 : f.min !== null || f.max !== null;
+    return isFilterActive(f);
   });
   const out = new Uint32Array(frame.rowCount);
   let n = 0;
@@ -18,8 +19,14 @@ export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: strin
       return (i: number) => set.has(col.values[i] ?? BLANK_LABEL);
     }
     if (col.type !== "number" && col.type !== "date") return () => true;
-    const lo = f.min ?? -Infinity;
-    const hi = f.max ?? Infinity;
+    let lo = f.min ?? -Infinity;
+    let hi = f.max ?? Infinity;
+    if (f.preset && col.type === "date") {
+      let latest = -Infinity;
+      for (const v of col.values) if (v > latest) latest = v;
+      if (latest === -Infinity) return () => false;
+      [lo, hi] = presetRange(f.preset, latest);
+    }
     return (i: number) => {
       const v = col.values[i];
       return v >= lo && v <= hi;

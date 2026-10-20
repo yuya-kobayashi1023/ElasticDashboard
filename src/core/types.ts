@@ -138,7 +138,17 @@ export type WidgetKind = Widget["kind"];
 
 export type Filter =
   | { id: string; column: string; kind: "values"; values: string[] }
-  | { id: string; column: string; kind: "range"; min: number | null; max: number | null };
+  | {
+      id: string;
+      column: string;
+      kind: "range";
+      min: number | null;
+      max: number | null;
+      /** Relative date range, recomputed from the data's latest date every time (min/max are ignored). */
+      preset?: DatePreset | null;
+    };
+
+export type DatePreset = "last-month" | "last-30" | "last-90" | "latest-year";
 
 export interface DataSource {
   fileName: string;

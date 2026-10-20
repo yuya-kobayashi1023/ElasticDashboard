@@ -292,3 +292,15 @@ describe("column types across data updates", () => {
     expect(columns.find((c) => c.key === "co2")!.type).toBe("category");
   });
 });
+
+describe("relative date presets", () => {
+  const days = (from: number, n: number) => Array.from({ length: n }, (_, i) => [new Date(Date.UTC(2020, 0, 1) + (from + i) * 86400000).toISOString().slice(0, 10), 1]);
+  const cols: ColumnMeta[] = [calc("Date", "Date", undefined, "date"), calc("ALL", "ALL", undefined, "number")];
+  const filter = { id: "f", column: "Date", kind: "range" as const, min: null, max: null, preset: "last-90" as const };
+  it("counts back from the latest date of the current data", () => {
+    const first = buildFrame({ headers: ["Date", "ALL"], rows: days(0, 600) }, cols);
+    expect(filterRows(first, [filter]).length).toBe(90);
+    const more = buildFrame({ headers: ["Date", "ALL"], rows: days(0, 1209) }, cols);
+    expect(filterRows(more, [filter]).length).toBe(90);
+  });
+});

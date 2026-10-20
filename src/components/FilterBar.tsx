@@ -2,8 +2,9 @@ import { CaretDownIcon, FunnelSimpleIcon, MagnifyingGlassIcon, PlusIcon, XIcon }
 import { useMemo, useState } from "react";
 import { extent, filterRows, valueCounts } from "../core/aggregate";
 import { formatDate, formatNumber } from "../core/format";
+import { clearFilter, DATE_PRESETS, isFilterActive, presetRange } from "../core/filters";
 import { newId } from "../core/id";
-import type { ColumnMeta, Filter, Frame } from "../core/types";
+import type { ColumnMeta, DatePreset, Filter, Frame } from "../core/types";
 import { Popover } from "./Popover";
 import { TypeIcon } from "./TypeIcon";
 
@@ -17,9 +18,7 @@ interface Props {
 const DAY = 86400000;
 const count = new Intl.NumberFormat("ja-JP");
 
-export function isActive(f: Filter): boolean {
-  return f.kind === "values" ? f.values.length > 0 : f.min !== null || f.max !== null;
-}
+export const isActive = isFilterActive;
 
 export function FilterBar({ frame, filters, filteredCount, onChange }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -84,7 +83,7 @@ export function FilterBar({ frame, filters, filteredCount, onChange }: Props) {
           type="button"
           className="link-btn"
           style={{ fontSize: 13 }}
-          onClick={() => onChange(filters.map((f) => (f.kind === "values" ? { ...f, values: [] } : { ...f, min: null, max: null })))}
+          onClick={() => onChange(filters.map(clearFilter))}
         >
           条件をクリア
         </button>
@@ -101,6 +100,7 @@ function summary(f: Filter, meta: ColumnMeta | undefined): string {
     if (f.values.length === 0) return "すべて";
     return f.values.length === 1 ? f.values[0] : `${f.values[0]} ほか${f.values.length - 1}件`;
   }
+  if (f.preset) return DATE_PRESETS.find((p) => p.id === f.preset)?.label ?? "すべて";
   if (f.min === null && f.max === null) return "すべて";
   const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, "day") : formatNumber(v, meta));
   if (f.min !== null && f.max !== null) return `${fmt(f.min)} 〜 ${fmt(f.max)}`;
@@ -230,18 +230,10 @@ function RangePicker({
   if (!ext) return <div className="muted">値がありません</div>;
   const [lo, hi] = ext;
 
-  const presets: { label: string; min: number | null; max: number | null }[] = [];
-  if (isDate) {
-    const end = new Date(hi);
-    const lastDay = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
-    presets.push(
-      { label: "全期間", min: null, max: null },
-      { label: "最終月", min: Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1), max: null },
-      { label: "直近30日", min: lastDay - 29 * DAY, max: null },
-      { label: "直近90日", min: lastDay - 89 * DAY, max: null },
-      { label: `${end.getUTCFullYear()}年`, min: Date.UTC(end.getUTCFullYear(), 0, 1), max: null },
-    );
-  }
+  // Presets are stored by name and recomputed from the latest date, so they follow new data.
+  const presets: { label: string; preset: DatePreset | null }[] = isDate ? [{ label: "全期間", preset: null }, ...DATE_PRESETS.map((p) => ({ label: p.label, preset: p.id }))] : [];
+  const presetSelected = (p: DatePreset | null) => (p === null ? !filter.preset && filter.min === null && filter.max === null : filter.preset === p);
+  const shown = filter.preset ? presetRange(filter.preset, hi) : null;
 
   return (
     <>
@@ -254,9 +246,9 @@ function RangePicker({
                 type="button"
                 key={p.label}
                 className="btn btn-sm"
-                aria-pressed={filter.min === p.min && filter.max === p.max}
-                style={filter.min === p.min && filter.max === p.max ? { borderColor: "var(--action)", background: "var(--action-soft)" } : undefined}
-                onClick={() => onChange({ ...filter, min: p.min, max: p.max })}
+                aria-pressed={presetSelected(p.preset)}
+                style={presetSelected(p.preset) ? { borderColor: "var(--action)", background: "var(--action-soft)" } : undefined}
+                onClick={() => onChange({ ...filter, min: null, max: null, preset: p.preset })}
               >
                 {p.label}
               </button>
@@ -268,7 +260,14 @@ function RangePicker({
         <label className="field">
           <span className="field-label">{isDate ? "開始日" : "最小"}</span>
           {isDate ? (
-            <input type="date" className="input input-sm" value={toInputDate(filter.min)} min={toInputDate(lo)} max={toInputDate(hi)} onChange={(e) => onChange({ ...filter, min: fromInputDate(e.target.value, false) })} />
+            <input
+              type="date"
+              className="input input-sm"
+              value={toInputDate(shown ? shown[0] : filter.min)}
+              min={toInputDate(lo)}
+              max={toInputDate(hi)}
+              onChange={(e) => onChange({ ...filter, preset: null, max: shown ? shown[1] : filter.max, min: fromInputDate(e.target.value, false) })}
+            />
           ) : (
             <input type="number" className="input input-sm" value={filter.min ?? ""} placeholder={String(lo)} onChange={(e) => onChange({ ...filter, min: e.target.value === "" ? null : Number(e.target.value) })} />
           )}
@@ -276,14 +275,21 @@ function RangePicker({
         <label className="field">
           <span className="field-label">{isDate ? "終了日" : "最大"}</span>
           {isDate ? (
-            <input type="date" className="input input-sm" value={toInputDate(filter.max === null ? null : filter.max - DAY + 1)} min={toInputDate(lo)} max={toInputDate(hi)} onChange={(e) => onChange({ ...filter, max: fromInputDate(e.target.value, true) })} />
+            <input
+              type="date"
+              className="input input-sm"
+              value={toInputDate(shown ? shown[1] - DAY + 1 : filter.max === null ? null : filter.max - DAY + 1)}
+              min={toInputDate(lo)}
+              max={toInputDate(hi)}
+              onChange={(e) => onChange({ ...filter, preset: null, min: shown ? shown[0] : filter.min, max: fromInputDate(e.target.value, true) })}
+            />
           ) : (
             <input type="number" className="input input-sm" value={filter.max ?? ""} placeholder={String(hi)} onChange={(e) => onChange({ ...filter, max: e.target.value === "" ? null : Number(e.target.value) })} />
           )}
         </label>
       </div>
       <div className="popover-foot">
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ ...filter, min: null, max: null })} disabled={filter.min === null && filter.max === null}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange(clearFilter(filter))} disabled={!isFilterActive(filter)}>
           解除
         </button>
         <button type="button" className="btn btn-sm" onClick={onDone}>
