@@ -1,7 +1,7 @@
 import { buildFrame } from "./frame";
-import { inferColumns, prefersAverage } from "./infer";
+import { cellToString, inferColumns, parseDate, parseNumber, prefersAverage } from "./infer";
 import { newId } from "./id";
-import type { ColumnMeta, Dashboard, DataSource, Filter, Frame, Measure, RawTable, Widget, WidgetKind } from "./types";
+import type { ColumnMeta, ColumnType, Dashboard, DataSource, Filter, Frame, Measure, RawTable, Widget, WidgetKind } from "./types";
 
 const MONEY_RE = /売上|金額|額|収益|利益|経費|費用|コスト|予算|amount|sales|revenue|cost|price|total|合計/i;
 const QUANTITY_RE = /数量|個数|件数|qty|quantity|count/i;
@@ -156,24 +156,52 @@ export function createDashboard(
 export interface ReplaceReport {
   added: string[];
   missing: string[];
+  /** Columns whose type changed because the new data no longer fits the old type. */
+  retyped: { label: string; from: ColumnType; to: ColumnType }[];
 }
 
-/** Keeps the dashboard layout and column settings while swapping in new data, matched by column name. */
+/** Whether ≥95% of the column's non-blank values convert to `type` (sampled for large data). */
+function fitsType(type: ColumnType, raw: RawTable, index: number): boolean {
+  if (type === "category" || type === "text") return true;
+  const fn = type === "number" ? parseNumber : parseDate;
+  const step = Math.max(1, Math.floor(raw.rows.length / 3000));
+  let seen = 0;
+  let ok = 0;
+  for (let i = 0; i < raw.rows.length; i += step) {
+    const v = raw.rows[i][index] ?? null;
+    if (cellToString(v) === null) continue;
+    seen++;
+    if (!Number.isNaN(fn(v))) ok++;
+  }
+  return seen === 0 || ok / seen >= 0.95;
+}
+
+/**
+ * Keeps the dashboard layout and column settings while swapping in new data, matched by column name.
+ * A column keeps its type as long as the new values still fit it, so a new month or appended rows
+ * cannot silently turn a number column into a category (and break the widgets using it).
+ */
 export function mergeColumns(
   existing: ColumnMeta[],
   raw: RawTable,
   previousHeaders?: string[],
-  /** Inference for `raw` done elsewhere (the parse worker). */
+  /** Inference for the columns of the new file, done elsewhere (the parse worker). */
   preInferred?: ColumnMeta[],
 ): { columns: ColumnMeta[]; report: ReplaceReport } {
-  const inferred = preInferred && preInferred.length === raw.headers.length ? preInferred : inferColumns(raw.headers, raw.rows);
+  const pre = new Map((preInferred ?? []).map((c) => [c.key, c]));
+  const infer = (h: string, i: number): ColumnMeta =>
+    pre.get(h) ?? inferColumns([h], raw.rows.map((r) => [r[i] ?? null]))[0];
   const byKey = new Map(existing.filter((c) => !c.derived).map((c) => [c.key, c]));
-  const columns = inferred.map((c) => {
-    const prev = byKey.get(c.key);
-    if (!prev) return c;
-    // Keep user overrides; follow re-inference only where the user never changed the type.
-    const type = prev.type === prev.inferredType ? c.type : prev.type;
-    return { ...prev, type, inferredType: c.inferredType };
+  const retyped: ReplaceReport["retyped"] = [];
+  const columns = raw.headers.map((h, i) => {
+    const prev = byKey.get(h);
+    if (!prev) return infer(h, i);
+    // A type the user chose is always kept.
+    if (prev.type !== prev.inferredType) return prev;
+    if (fitsType(prev.type, raw, i)) return prev;
+    const next = infer(h, i);
+    if (next.type !== prev.type) retyped.push({ label: prev.label, from: prev.type, to: next.type });
+    return { ...prev, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format };
   });
   const present = new Set(raw.headers);
   const derived = existing.filter((c) => c.derived);
@@ -182,6 +210,10 @@ export function mergeColumns(
   const prev = previousHeaders ? new Set(previousHeaders) : null;
   return {
     columns: [...columns, ...missing, ...derived],
-    report: { added: inferred.filter((c) => !byKey.has(c.key)).map((c) => c.label), missing: missing.filter((c) => !prev || prev.has(c.key)).map((c) => c.label) },
+    report: {
+      added: raw.headers.filter((h) => !byKey.has(h)),
+      missing: missing.filter((c) => !prev || prev.has(c.key)).map((c) => c.label),
+      retyped,
+    },
   };
 }

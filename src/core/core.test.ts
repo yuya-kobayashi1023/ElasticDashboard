@@ -151,7 +151,7 @@ describe("dashboard generation and aggregation", () => {
     const next = { headers: [...raw.headers.filter((h) => h !== "担当者"), "新列"], rows: [] };
     const { columns, report } = mergeColumns(edited, next);
     expect(columns.find((c) => c.key === "地域")).toMatchObject({ label: "エリア", hidden: true });
-    expect(report).toEqual({ added: ["新列"], missing: ["担当者"] });
+    expect(report).toEqual({ added: ["新列"], missing: ["担当者"], retyped: [] });
   });
 });
 

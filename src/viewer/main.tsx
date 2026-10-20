@@ -11,7 +11,7 @@ import { mergeColumns } from "../core/autoDashboard";
 import { renderExportHtml, safeFileName, usedColumns } from "../core/export";
 import type { ExportPayload } from "../core/exportFormat";
 import { toggleFilterValue } from "../core/filters";
-import { columnLabel } from "../core/format";
+import { columnLabel, TYPE_LABEL } from "../core/format";
 import { parseFile, type ParsedSheet } from "../core/parse";
 import type { Dashboard, Filter, RawTable } from "../core/types";
 import "../styles/base.css";
@@ -88,6 +88,9 @@ function Viewer({ initial }: { initial: ExportPayload }) {
       const parts = [`「${fileName}」を読み込みました（${count.format(sheet.table.rows.length)} 行）`];
       if (missingUsed.length) parts.push(`グラフで使う列のうち、${missingUsed.map((k) => columnLabel(next.columns, k)).join("、")} が見つかりません`);
       if (report.added.length) parts.push(`新しい列: ${report.added.join("、")}`);
+      if (report.retyped.length) {
+        parts.push(`新しいデータに合わせて種類を変えた列: ${report.retyped.map((r) => `${r.label}（${TYPE_LABEL[r.from]} → ${TYPE_LABEL[r.to]}）`).join("、")}`);
+      }
       parts.push(...sheet.notes);
       if (encoding === "shift_jis") parts.push("文字コードは Shift_JIS として読み込みました");
       parts.push("このデータで残すには「HTML を保存」を押してください");
