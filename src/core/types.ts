@@ -5,7 +5,33 @@ export interface RawTable {
   rows: RawCell[][];
 }
 
-export type ColumnType = "number" | "date" | "category" | "text";
+export type ColumnType = "number" | "date" | "time" | "duration" | "boolean" | "category" | "text";
+
+/** Per-column conversion options. Undefined fields (or an undefined `parse`) mean automatic. */
+export interface ColumnParse {
+  /** number: "1.234,5" style (comma = decimal separator, dot/space = grouping). */
+  decimalComma?: boolean;
+  /** number/duration: multiply converted values (e.g. 1000 for values written in 千円). */
+  scale?: number;
+  /** date */
+  dateFormat?: "auto" | "ymd" | "mdy" | "dmy" | "unix-s" | "unix-ms" | "excel" | "pattern";
+  /** date/time with format "pattern". Tokens: YYYY YY MM M DD D hh h mm m ss s; any other char is a literal. */
+  pattern?: string;
+  /** time: "hm" = "9:30" / "0930" / "9時30分" → 09:30:00; "hms" requires seconds; auto accepts both. */
+  timeFormat?: "auto" | "hm" | "hms" | "pattern";
+  /** duration: unit of bare numbers ("90"), default seconds. */
+  durationUnit?: "ms" | "s" | "min" | "h" | "d";
+  /** duration: whether "12:34" means hours:minutes (default) or minutes:seconds. "1:02:03" is always h:m:s. */
+  durationColon?: "hm" | "ms";
+  /** boolean: extra spellings (compared case-insensitively after NFKC + trim). */
+  trueValues?: string[];
+  falseValues?: string[];
+  /** category/text */
+  trim?: boolean;
+  /** NFKC (全角英数→半角) */
+  widthNormalize?: boolean;
+  letterCase?: "none" | "upper" | "lower";
+}
 
 export interface NumberFormat {
   prefix: string;
@@ -61,6 +87,8 @@ export interface ColumnMeta {
   order?: string[];
   /** Date columns holding only a year (e.g. "1750") display and convert as years. */
   dateUnit?: "year";
+  /** How raw cells are converted; undefined = automatic. */
+  parse?: ColumnParse;
 }
 
 export type Agg = "count" | "sum" | "avg" | "min" | "max" | "distinct";
@@ -216,10 +244,12 @@ export interface DashboardSummary {
   fileName: string;
 }
 
-/** Column values after coercion. Numbers and dates use NaN for blanks; dates are UTC epoch ms. */
+/**
+ * Column values after coercion. Float types use NaN for blanks; dates are UTC epoch ms,
+ * time is seconds since 00:00, duration is seconds, boolean is 1 / 0.
+ */
 export type ColumnValues =
-  | { type: "number"; values: Float64Array }
-  | { type: "date"; values: Float64Array }
+  | { type: "number" | "date" | "time" | "duration" | "boolean"; values: Float64Array }
   | { type: "category" | "text"; values: (string | null)[] };
 
 export interface Frame {

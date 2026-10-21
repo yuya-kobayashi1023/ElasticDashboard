@@ -2,7 +2,8 @@ import { ChartBarHorizontalIcon, ChartBarIcon, ChartLineIcon, ChartScatterIcon, 
 import { usePalette } from "../components/ThemeScope";
 import type { ReactNode } from "react";
 import { defaultWidget } from "../core/autoDashboard";
-import { AGG_LABEL, BUCKET_LABEL, TYPE_LABEL, widgetTitle } from "../core/format";
+import { aggsFor, isContinuousType, isDimensionType } from "../core/columnTypes";
+import { AGG_LABEL, BUCKET_LABEL, TYPE_SHORT_LABEL, widgetTitle } from "../core/format";
 import type { Agg, BarSort, ColumnMeta, CompareBucket, Frame, KpiWidget, Measure, Span, TimeBucket, Widget, WidgetKind } from "../core/types";
 import { Dialog } from "./Dialog";
 import { useApp, useToasts } from "./store";
@@ -118,7 +119,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
               <ColumnSelect
                 label="分類する列"
                 value={widget.dimension}
-                columns={columns.filter((c) => c.type === "category" || c.type === "text")}
+                columns={columns.filter((c) => isDimensionType(c.type))}
                 onChange={(dimension) => set(columns.find((c) => c.key === dimension)?.order ? { dimension, sort: "label" } : { dimension })}
               />
               <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
@@ -169,7 +170,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
                   onChange={(e) => {
                     const v = e.target.value;
                     if (v === SERIES_COLUMNS) {
-                      const first = widget.measure.column ?? columns.find((c) => c.type === "number")?.key;
+                      const first = widget.measure.column ?? columns.find((c) => isContinuousType(c.type))?.key;
                       set({ split: null, series: first ? [first] : [] });
                     } else set({ split: v || null, series: null });
                   }}
@@ -177,7 +178,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
                   <option value="">分けない</option>
                   <option value={SERIES_COLUMNS}>複数の数値列を並べる</option>
                   {columns
-                    .filter((c) => c.type === "category")
+                    .filter((c) => c.type === "category" || c.type === "boolean")
                     .map((c) => (
                       <option key={c.key} value={c.key}>
                         {c.label}
@@ -191,7 +192,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
                   <legend className="field-label">並べる列（最大 8 列）</legend>
                   <div className="check-list">
                     {columns
-                      .filter((c) => c.type === "number")
+                      .filter((c) => isContinuousType(c.type))
                       .map((c) => {
                         const on = widget.series!.includes(c.key);
                         return (
@@ -232,21 +233,21 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
           )}
 
           {widget.kind === "histogram" && (
-            <ColumnSelect label="数値の列" value={widget.column} columns={columns.filter((c) => c.type === "number")} onChange={(column) => set({ column })} />
+            <ColumnSelect label="数値の列" value={widget.column} columns={columns.filter((c) => isContinuousType(c.type))} onChange={(column) => set({ column })} />
           )}
 
           {widget.kind === "scatter" && (
             <>
               <div className="field-row">
-                <ColumnSelect label="横軸" value={widget.x} columns={columns.filter((c) => c.type === "number")} onChange={(x) => set({ x })} />
-                <ColumnSelect label="縦軸" value={widget.y} columns={columns.filter((c) => c.type === "number")} onChange={(y) => set({ y })} />
+                <ColumnSelect label="横軸" value={widget.x} columns={columns.filter((c) => isContinuousType(c.type))} onChange={(x) => set({ x })} />
+                <ColumnSelect label="縦軸" value={widget.y} columns={columns.filter((c) => isContinuousType(c.type))} onChange={(y) => set({ y })} />
               </div>
               <label className="field">
                 <span className="field-label">色分けする列</span>
                 <select className="select" value={widget.colorBy ?? ""} onChange={(e) => set({ colorBy: e.target.value || null })}>
                   <option value="">色分けしない</option>
                   {columns
-                    .filter((c) => c.type === "category")
+                    .filter((c) => c.type === "category" || c.type === "boolean")
                     .map((c) => (
                       <option key={c.key} value={c.key}>
                         {c.label}
@@ -261,8 +262,8 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
           {widget.kind === "pivot" && (
             <>
               <div className="field-row">
-                <ColumnSelect label="行" value={widget.rows} columns={columns.filter((c) => c.type === "category" || c.type === "text")} onChange={(rows) => set({ rows })} />
-                <ColumnSelect label="列" value={widget.cols} columns={columns.filter((c) => c.type === "category" || c.type === "text")} onChange={(cols) => set({ cols })} />
+                <ColumnSelect label="行" value={widget.rows} columns={columns.filter((c) => isDimensionType(c.type))} onChange={(rows) => set({ rows })} />
+                <ColumnSelect label="列" value={widget.cols} columns={columns.filter((c) => isDimensionType(c.type))} onChange={(cols) => set({ cols })} />
               </div>
               <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
               <span className="field-hint">行は上位 20 件、列は上位 10 件を表示し、残りは「その他」にまとめます</span>
@@ -307,7 +308,7 @@ function ColumnSelect({ label, value, columns, onChange }: { label: string; valu
         {!known && <option value="">選択してください</option>}
         {columns.map((c) => (
           <option key={c.key} value={c.key}>
-            {c.label}（{TYPE_LABEL[c.type]}）{c.hidden ? " ・非表示" : ""}
+            {c.label}（{TYPE_SHORT_LABEL[c.type]}）{c.hidden ? " ・非表示" : ""}
           </option>
         ))}
       </select>
@@ -316,14 +317,15 @@ function ColumnSelect({ label, value, columns, onChange }: { label: string; valu
   );
 }
 
-const NUMERIC_AGGS: Agg[] = ["sum", "avg", "min", "max"];
+const COLUMN_AGGS: Agg[] = ["sum", "avg", "min", "max", "distinct"];
 
 function MeasureFields({ measure, columns, onChange }: { measure: Measure; columns: ColumnMeta[]; onChange: (m: Measure) => void }) {
-  const numeric = columns.filter((c) => c.type === "number");
-  const candidates = measure.agg === "distinct" ? columns : numeric;
+  // Columns a given aggregation makes sense for (a sum needs numbers, a distinct count takes anything).
+  const poolFor = (agg: Agg) => columns.filter((c) => aggsFor(c.type).includes(agg));
+  const candidates = poolFor(measure.agg);
   const setAgg = (agg: Agg) => {
     if (agg === "count") return onChange({ agg, column: null });
-    const pool = agg === "distinct" ? columns : numeric;
+    const pool = poolFor(agg);
     const column = pool.some((c) => c.key === measure.column) ? measure.column : (pool.find((c) => !c.idLike) ?? pool[0])?.key ?? null;
     onChange({ agg, column });
   };
@@ -333,12 +335,11 @@ function MeasureFields({ measure, columns, onChange }: { measure: Measure; colum
         <span className="field-label">集計方法</span>
         <select className="select" value={measure.agg} onChange={(e) => setAgg(e.target.value as Agg)}>
           <option value="count">{AGG_LABEL.count}（行数）</option>
-          {NUMERIC_AGGS.map((a) => (
-            <option key={a} value={a} disabled={numeric.length === 0}>
+          {COLUMN_AGGS.map((a) => (
+            <option key={a} value={a} disabled={poolFor(a).length === 0}>
               {AGG_LABEL[a]}
             </option>
           ))}
-          <option value="distinct">{AGG_LABEL.distinct}</option>
         </select>
       </label>
       {measure.agg !== "count" && <ColumnSelect label="集計する列" value={measure.column ?? ""} columns={candidates} onChange={(column) => onChange({ ...measure, column })} />}

@@ -1,6 +1,8 @@
 import { composeDates, datePart, evaluateFormula, FormulaError, lookupKeys, masterIndex, rowKeys } from "./derive";
-import { cellToString, parseDateValue, parseNumber } from "./infer";
-import type { ColumnMeta, ColumnType, ColumnValues, Frame, Lookup, RawTable } from "./types";
+import { isFloatColumn } from "./columnTypes";
+import { cellToString } from "./infer";
+import { converterFor, textNormalizerFor } from "./parsers";
+import type { ColumnMeta, ColumnValues, Frame, Lookup, RawTable } from "./types";
 
 /** Rows processed between yields when building a frame without blocking the page. */
 const CHUNK = 20000;
@@ -14,11 +16,14 @@ function runSync<T>(it: Steps<T>): T {
   }
 }
 
-function* coerceSteps(raw: RawTable, index: number, type: ColumnType): Steps<ColumnValues> {
+type CoerceMeta = Pick<ColumnMeta, "type" | "parse" | "dateUnit">;
+
+function* coerceSteps(raw: RawTable, index: number, meta: CoerceMeta): Steps<ColumnValues> {
   const n = raw.rows.length;
-  if (type === "number" || type === "date") {
+  const type = meta.type;
+  if (type !== "category" && type !== "text") {
     const values = new Float64Array(n);
-    const fn = type === "number" ? parseNumber : parseDateValue;
+    const fn = converterFor(meta);
     for (let i = 0; i < n; i++) {
       if (i && i % CHUNK === 0) yield;
       values[i] = fn(raw.rows[i][index] ?? null);
@@ -26,15 +31,16 @@ function* coerceSteps(raw: RawTable, index: number, type: ColumnType): Steps<Col
     return { type, values };
   }
   const values: (string | null)[] = new Array(n);
+  const fn = textNormalizerFor(meta);
   for (let i = 0; i < n; i++) {
     if (i && i % CHUNK === 0) yield;
-    values[i] = cellToString(raw.rows[i][index] ?? null);
+    values[i] = fn(raw.rows[i][index] ?? null);
   }
   return { type, values };
 }
 
-export function coerceColumn(raw: RawTable, index: number, type: ColumnType): ColumnValues {
-  return runSync(coerceSteps(raw, index, type));
+export function coerceColumn(raw: RawTable, index: number, meta: CoerceMeta): ColumnValues {
+  return runSync(coerceSteps(raw, index, meta));
 }
 
 function* frameSteps(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[]): Steps<Frame> {
@@ -47,7 +53,7 @@ function* frameSteps(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[]): S
     if (col.derived) continue;
     const idx = indexByKey.get(col.key);
     if (idx === undefined) continue;
-    values.set(col.key, yield* coerceSteps(raw, idx, col.type));
+    values.set(col.key, yield* coerceSteps(raw, idx, col));
     meta.set(col.key, col);
   }
   // Calculated columns run in list order, so later ones may use earlier ones.
@@ -71,7 +77,7 @@ function* frameSteps(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[]): S
         const keys = rowKeys(srcs as ColumnValues[], n);
         // Build a one-column table of looked-up raw cells, then coerce it like a file column.
         const cells = { headers: [col.key], rows: keys.map((k) => [k === null ? null : (l.table.rows[index.get(k) ?? -1]?.[ci] ?? null)]) };
-        values.set(col.key, yield* coerceSteps(cells, 0, col.type));
+        values.set(col.key, yield* coerceSteps(cells, 0, col));
       } else {
         const src = values.get(d.source);
         if (!src) throw new FormulaError("元の日付列がデータにありません");
@@ -121,7 +127,7 @@ export interface ColumnStats {
 export function columnStats(raw: RawTable, col: ColumnMeta): ColumnStats {
   const idx = raw.headers.indexOf(col.key);
   if (idx < 0) return { blank: 0, distinct: 0, invalid: 0, samples: [] };
-  const coerced = coerceColumn(raw, idx, col.type);
+  const coerced = coerceColumn(raw, idx, col);
   let blank = 0;
   let invalid = 0;
   const distinct = new Set<string>();
@@ -134,7 +140,7 @@ export function columnStats(raw: RawTable, col: ColumnMeta): ColumnStats {
     }
     if (distinct.size < 100000) distinct.add(s);
     if (samples.length < 3 && !samples.includes(s)) samples.push(s);
-    if ((coerced.type === "number" || coerced.type === "date") && Number.isNaN(coerced.values[i])) invalid++;
+    if (isFloatColumn(coerced) && Number.isNaN(coerced.values[i])) invalid++;
   }
   return { blank, distinct: distinct.size, invalid, samples };
 }
@@ -175,7 +181,7 @@ export async function columnStatsAsync(
         text = typeof v === "number" ? (Number.isNaN(v) ? null : format(v, c)) : v;
       } else {
         text = cellToString(raw.rows[i][idx] ?? null);
-        if (text !== null && col && (col.type === "number" || col.type === "date") && Number.isNaN(col.values[i])) invalid++;
+        if (text !== null && col && isFloatColumn(col) && Number.isNaN(col.values[i])) invalid++;
       }
       if (text === null) {
         blank++;

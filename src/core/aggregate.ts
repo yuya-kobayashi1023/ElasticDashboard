@@ -1,8 +1,11 @@
+import { aggsFor, isContinuousType, isFloatColumn } from "./columnTypes";
 import { isFilterActive, presetRange } from "./filters";
 import type { Agg, BarSort, Filter, Frame, Measure, TimeBucket } from "./types";
 
 export const BLANK_LABEL = "(空欄)";
 export const OTHER_LABEL = "その他";
+export const TRUE_LABEL = "はい";
+export const FALSE_LABEL = "いいえ";
 
 export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: string): Uint32Array {
   const active = filters.filter((f) => {
@@ -15,10 +18,14 @@ export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: strin
     const col = frame.columns.get(f.column)!;
     if (f.kind === "values") {
       const set = new Set(f.values);
-      if (col.type === "number" || col.type === "date") return (i: number) => set.has(String(col.values[i]));
+      if (col.type === "boolean") {
+        const label = labelGetter(frame, f.column);
+        return (i: number) => set.has(label(i));
+      }
+      if (isFloatColumn(col)) return (i: number) => set.has(String(col.values[i]));
       return (i: number) => set.has(col.values[i] ?? BLANK_LABEL);
     }
-    if (col.type !== "number" && col.type !== "date") return () => true;
+    if (!isFloatColumn(col)) return () => true;
     let lo = f.min ?? -Infinity;
     let hi = f.max ?? Infinity;
     if (f.preset && col.type === "date") {
@@ -89,7 +96,7 @@ function feeder(frame: Frame, measure: Measure): (acc: Acc, i: number) => void {
       if (v !== null && !(typeof v === "number" && Number.isNaN(v))) acc.set!.add(String(v));
     };
   }
-  if (col.type !== "number" && col.type !== "date") return (acc) => void acc.count++;
+  if (!isFloatColumn(col)) return (acc) => void acc.count++;
   const values = col.values;
   return (acc, i) => {
     acc.count++;
@@ -106,8 +113,7 @@ export function measureIsValid(frame: Frame, m: Measure): boolean {
   if (m.agg === "count") return true;
   if (!m.column || !frame.columns.has(m.column)) return false;
   if (m.agg === "distinct") return true;
-  const t = frame.columns.get(m.column)!.type;
-  return t === "number" || (t === "date" && (m.agg === "min" || m.agg === "max"));
+  return aggsFor(frame.columns.get(m.column)!.type).includes(m.agg);
 }
 
 export function aggregate(frame: Frame, rows: Uint32Array, measure: Measure): number {
@@ -119,7 +125,10 @@ export function aggregate(frame: Frame, rows: Uint32Array, measure: Measure): nu
 
 function labelGetter(frame: Frame, key: string): (i: number) => string {
   const col = frame.columns.get(key)!;
-  if (col.type === "number" || col.type === "date") {
+  if (col.type === "boolean") {
+    return (i) => (Number.isNaN(col.values[i]) ? BLANK_LABEL : col.values[i] ? TRUE_LABEL : FALSE_LABEL);
+  }
+  if (isFloatColumn(col)) {
     return (i) => (Number.isNaN(col.values[i]) ? BLANK_LABEL : String(col.values[i]));
   }
   return (i) => col.values[i] ?? BLANK_LABEL;
@@ -323,7 +332,7 @@ export function niceStep(range: number, target: number): number {
 
 export function histogram(frame: Frame, rows: Uint32Array, key: string): Bin[] {
   const col = frame.columns.get(key);
-  if (!col || col.type !== "number") return [];
+  if (!col || !isFloatColumn(col) || !isContinuousType(col.type)) return [];
   const vals: number[] = [];
   for (const i of rows) if (!Number.isNaN(col.values[i])) vals.push(col.values[i]);
   if (vals.length === 0) return [];
@@ -357,7 +366,7 @@ export function valueCounts(frame: Frame, rows: Uint32Array, key: string): { val
 
 export function extent(frame: Frame, key: string): [number, number] | null {
   const col = frame.columns.get(key);
-  if (!col || (col.type !== "number" && col.type !== "date")) return null;
+  if (!col || !isFloatColumn(col)) return null;
   let min = Infinity;
   let max = -Infinity;
   for (const v of col.values) {
@@ -389,7 +398,7 @@ export function scatterPoints(
 ): { points: ScatterPoint[]; groups: string[]; valid: number } {
   const xc = frame.columns.get(xKey);
   const yc = frame.columns.get(yKey);
-  if (!xc || !yc || xc.type !== "number" || yc.type !== "number") return { points: [], groups: [], valid: 0 };
+  if (!xc || !yc || !isFloatColumn(xc) || !isFloatColumn(yc) || !isContinuousType(xc.type) || !isContinuousType(yc.type)) return { points: [], groups: [], valid: 0 };
   const validRows: number[] = [];
   for (const i of rows) if (!Number.isNaN(xc.values[i]) && !Number.isNaN(yc.values[i])) validRows.push(i);
   let groups: string[] = [];

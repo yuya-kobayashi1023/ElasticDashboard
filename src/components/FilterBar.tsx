@@ -1,7 +1,7 @@
 import { CaretDownIcon, FunnelSimpleIcon, MagnifyingGlassIcon, PlusIcon, XIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { extent, filterRows, valueCounts } from "../core/aggregate";
-import { formatDate, formatNumber } from "../core/format";
+import { formatDate, formatValue } from "../core/format";
 import { clearFilter, DATE_PRESETS, isFilterActive, presetRange } from "../core/filters";
 import { newId } from "../core/id";
 import type { ColumnMeta, DatePreset, Filter, Frame } from "../core/types";
@@ -65,7 +65,7 @@ export function FilterBar({ frame, filters, filteredCount, onChange }: Props) {
               className="popover-option"
               onClick={() => {
                 const f: Filter =
-                  c.type === "category"
+                  c.type === "category" || c.type === "boolean"
                     ? { id: newId(), column: c.key, kind: "values", values: [] }
                     : { id: newId(), column: c.key, kind: "range", min: null, max: null };
                 onChange([...filters, f]);
@@ -102,7 +102,7 @@ function summary(f: Filter, meta: ColumnMeta | undefined): string {
   }
   if (f.preset) return DATE_PRESETS.find((p) => p.id === f.preset)?.label ?? "すべて";
   if (f.min === null && f.max === null) return "すべて";
-  const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, meta.dateUnit === "year" ? "year" : "day") : formatNumber(v, meta));
+  const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, meta.dateUnit === "year" ? "year" : "day") : formatValue(v, meta));
   if (f.min !== null && f.max !== null) return `${fmt(f.min)} 〜 ${fmt(f.max)}`;
   return f.min !== null ? `${fmt(f.min)} 以降` : `${fmt(f.max!)} まで`;
 }

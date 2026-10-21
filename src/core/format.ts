@@ -12,7 +12,21 @@ export const AGG_LABEL: Record<Agg, string> = {
 
 export const TYPE_LABEL: Record<ColumnType, string> = {
   number: "数値",
+  date: "日付・日時",
+  time: "時刻",
+  duration: "時間の長さ",
+  boolean: "真偽値（はい/いいえ）",
+  category: "カテゴリ",
+  text: "テキスト",
+};
+
+/** Where space is tight (badges, tables). */
+export const TYPE_SHORT_LABEL: Record<ColumnType, string> = {
+  number: "数値",
   date: "日付",
+  time: "時刻",
+  duration: "時間",
+  boolean: "真偽値",
   category: "カテゴリ",
   text: "テキスト",
 };
@@ -108,6 +122,73 @@ export function formatDate(t: number, bucket: ResolvedBucket | "datetime" = "day
   }
 }
 
+/** Time of day in seconds as "09:05"; seconds only when they are not zero. */
+export function formatTimeOfDay(sec: number): string {
+  if (Number.isNaN(sec)) return "—";
+  const t = ((Math.round(sec) % 86400) + 86400) % 86400;
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = t % 60;
+  return `${pad(h)}:${pad(m)}${s ? `:${pad(s)}` : ""}`;
+}
+
+const DURATION_UNITS: [number, string][] = [
+  [86400, "日"],
+  [3600, "時間"],
+  [60, "分"],
+  [1, "秒"],
+];
+
+/** Length of time in seconds: "1時間23分" in full style, "1.5時間" (one unit, ≤1 decimal) for axis ticks. */
+export function formatDuration(sec: number, style: "full" | "compact" = "full"): string {
+  if (Number.isNaN(sec)) return "—";
+  const sign = sec < 0 ? "-" : "";
+  const abs = Math.abs(sec);
+  if (style === "compact") {
+    let i = DURATION_UNITS.findIndex(([base]) => abs >= base);
+    if (i < 0) i = DURATION_UNITS.length - 1;
+    let n = Math.round((abs / DURATION_UNITS[i][0]) * 10) / 10;
+    // 59.97 min rounds to 60 min: move up to hours.
+    if (i > 0 && n * DURATION_UNITS[i][0] >= DURATION_UNITS[i - 1][0]) {
+      i -= 1;
+      n = Math.round((abs / DURATION_UNITS[i][0]) * 10) / 10;
+    }
+    return `${n === 0 ? "" : sign}${n}${DURATION_UNITS[i][1]}`;
+  }
+  const r = Math.round(abs * 100) / 100;
+  if (r < 60) return `${r === 0 ? "" : sign}${r}秒`;
+  let rest = Math.round(abs);
+  const parts: number[] = [];
+  for (const [base] of DURATION_UNITS) {
+    parts.push(Math.floor(rest / base));
+    rest %= base;
+  }
+  const first = parts.findIndex((x) => x > 0);
+  let out = `${sign}${parts[first]}${DURATION_UNITS[first][1]}`;
+  if (first < parts.length - 1 && parts[first + 1] > 0) out += `${parts[first + 1]}${DURATION_UNITS[first + 1][1]}`;
+  return out;
+}
+
+const percent = new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 1 });
+
+/** Cell / tick value of a column in its own type. */
+export function formatValue(v: number, meta?: ColumnMeta | null, style: "full" | "compact" = "full"): string {
+  if (!meta) return formatNumber(v, null, style);
+  if (Number.isNaN(v)) return "—";
+  switch (meta.type) {
+    case "date":
+      return formatDate(v, meta.dateUnit === "year" ? "year" : "datetime");
+    case "time":
+      return formatTimeOfDay(v);
+    case "duration":
+      return formatDuration(v, style);
+    case "boolean":
+      return v ? "はい" : "いいえ";
+    default:
+      return formatNumber(v, meta, style);
+  }
+}
+
 /** Short axis tick label for a bucket start. */
 export function formatTick(t: number, bucket: ResolvedBucket): string {
   const d = new Date(t);
@@ -146,6 +227,9 @@ export function formatMeasure(v: number, m: Measure, meta: Map<string, ColumnMet
   if (m.agg === "count" || m.agg === "distinct" || !m.column) return formatNumber(v, null, style);
   const col = meta.get(m.column);
   if (col?.type === "date") return formatDate(v, col.dateUnit === "year" ? "year" : "day");
+  if (col?.type === "time") return formatTimeOfDay(v);
+  if (col?.type === "duration") return formatDuration(v, style);
+  if (col?.type === "boolean") return m.agg === "avg" ? `${percent.format(v * 100)}%` : formatNumber(v, null, style);
   if (m.agg === "avg" && col && col.format.decimals === 0) {
     return formatNumber(v, { ...col, format: { ...col.format, decimals: null } }, style);
   }
@@ -164,12 +248,13 @@ function withUnit(title: string, unit: string): string {
 export function measureAxisTitle(m: Measure, meta: Map<string, ColumnMeta>): string {
   if (m.agg === "count" || m.agg === "distinct" || !m.column) return measureLabel(m, meta);
   const col = meta.get(m.column);
-  return withUnit(measureLabel(m, meta), col?.type === "date" ? "" : unitOf(col));
+  if (col?.type === "boolean") return withUnit(measureLabel(m, meta), m.agg === "avg" ? "%" : "");
+  return withUnit(measureLabel(m, meta), col?.type === "number" ? unitOf(col) : "");
 }
 
 /** Axis title for a plain column, with its unit when it has one. */
 export function columnAxisTitle(meta: ColumnMeta | null | undefined, fallback = ""): string {
-  return meta ? withUnit(meta.label, unitOf(meta)) : fallback;
+  return meta ? withUnit(meta.label, meta.type === "number" ? unitOf(meta) : "") : fallback;
 }
 
 /** "地域別の" — but "種別ごとの" so 別 is not doubled. */

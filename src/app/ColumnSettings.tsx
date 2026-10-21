@@ -5,13 +5,13 @@ import { DerivedDialog } from "./DerivedDialog";
 import { LookupDialog } from "./LookupDialog";
 import { autoFilters, autoWidgets } from "../core/autoDashboard";
 import { columnStatsAsync, type ColumnStats } from "../core/frame";
-import { columnLabel, formatDate, formatNumber, TYPE_LABEL } from "../core/format";
+import { columnLabel, formatValue, TYPE_LABEL } from "../core/format";
 import type { ColumnMeta, ColumnType, Frame, Lookup, NumberFormat, RawTable } from "../core/types";
 import { TypeIcon } from "../components/TypeIcon";
 import { useApp, useToasts } from "./store";
 
 const count = new Intl.NumberFormat("ja-JP");
-const TYPES: ColumnType[] = ["number", "date", "category", "text"];
+const TYPES: ColumnType[] = ["number", "date", "time", "duration", "boolean", "category", "text"];
 
 /** `frame` is the dashboard's already built frame (null while a large dataset is still being prepared). */
 export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | null }) {
@@ -22,8 +22,7 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
   useEffect(() => {
     if (!frame) return;
     const signal = { cancelled: false };
-    const format = (v: number, c: ColumnMeta) => (c.type === "date" ? formatDate(v, c.dateUnit === "year" ? "year" : "day") : formatNumber(v, c));
-    void columnStatsAsync(raw, dashboard.columns, frame, format, signal).then((m) => {
+    void columnStatsAsync(raw, dashboard.columns, frame, formatValue, signal).then((m) => {
       if (m && !signal.cancelled) setStats(m);
     });
     return () => {
@@ -199,7 +198,7 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
                         className="select select-sm"
                         value={c.type}
                         disabled={!!c.derived}
-                        onChange={(e) => patch(c.key, { type: e.target.value as ColumnType })}
+                        onChange={(e) => patch(c.key, { type: e.target.value as ColumnType, parse: undefined })}
                       >
                         {TYPES.map((t) => (
                           <option key={t} value={t}>

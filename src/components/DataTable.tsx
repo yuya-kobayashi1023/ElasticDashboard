@@ -1,6 +1,7 @@
 import { CaretDownIcon, CaretLeftIcon, CaretRightIcon, CaretUpIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
-import { formatDate, formatNumber } from "../core/format";
+import { isContinuousType, isFloatColumn } from "../core/columnTypes";
+import { formatValue } from "../core/format";
 import type { ColumnMeta, Frame } from "../core/types";
 
 interface Props {
@@ -22,7 +23,7 @@ export function DataTable({ frame, rows, columns, pageSize }: Props) {
     const col = frame.columns.get(sort.key);
     if (!col) return rows;
     const idx = Array.from(rows);
-    if (col.type === "number" || col.type === "date") {
+    if (isFloatColumn(col)) {
       const v = col.values;
       idx.sort((a, b) => {
         if (Number.isNaN(v[a])) return 1;
@@ -47,8 +48,7 @@ export function DataTable({ frame, rows, columns, pageSize }: Props) {
   const cell = (c: ColumnMeta, i: number) => {
     const col = frame.columns.get(c.key);
     if (!col) return null;
-    if (col.type === "number") return Number.isNaN(col.values[i]) ? null : formatNumber(col.values[i], c);
-    if (col.type === "date") return Number.isNaN(col.values[i]) ? null : formatDate(col.values[i], c.dateUnit === "year" ? "year" : "datetime");
+    if (isFloatColumn(col)) return Number.isNaN(col.values[i]) ? null : formatValue(col.values[i], c);
     return col.values[i];
   };
 
@@ -66,7 +66,7 @@ export function DataTable({ frame, rows, columns, pageSize }: Props) {
           <thead>
             <tr>
               {columns.map((c) => {
-                const numeric = c.type === "number";
+                const numeric = isContinuousType(c.type);
                 const active = sort?.key === c.key;
                 return (
                   <th key={c.key} className={numeric ? "num" : undefined} aria-sort={active ? (sort!.dir === 1 ? "ascending" : "descending") : "none"}>
@@ -85,7 +85,7 @@ export function DataTable({ frame, rows, columns, pageSize }: Props) {
                 {columns.map((c) => {
                   const v = cell(c, i);
                   return (
-                    <td key={c.key} className={c.type === "number" ? "num" : undefined} title={v ?? undefined}>
+                    <td key={c.key} className={isContinuousType(c.type) ? "num" : undefined} title={v ?? undefined}>
                       {v ?? <span className="blank">—</span>}
                     </td>
                   );

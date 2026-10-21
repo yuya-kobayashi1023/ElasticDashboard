@@ -39,7 +39,7 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
 
   // Columns a new column may refer to: everything defined before it.
   const others = columns.filter((c) => c.key !== editing?.key);
-  const numeric = others.filter((c) => c.type === "number");
+  const numeric = others.filter((c) => c.type === "number" || c.type === "duration");
   const dates = others.filter((c) => c.type === "date");
   const partCandidates = others.filter((c) => c.type === "number" || c.type === "category" || (c.type === "date" && c.dateUnit === "year"));
 

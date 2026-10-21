@@ -1,7 +1,8 @@
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
 import { aggregate, comparePeriods, filterRows, groupBy, histogram, measureIsValid, pivot, scatterPoints, timeSeries, timeSeriesColumns } from "../core/aggregate";
-import { columnAxisTitle, columnLabel, formatMeasure, formatNumber, measureAxisTitle } from "../core/format";
+import { isContinuousType, isDimensionType } from "../core/columnTypes";
+import { columnAxisTitle, columnLabel, formatMeasure, formatValue, measureAxisTitle } from "../core/format";
 import type { Filter, Frame, Widget } from "../core/types";
 import { BarChart } from "./charts/BarChart";
 import { Histogram } from "./charts/Histogram";
@@ -28,10 +29,13 @@ export function widgetProblem(w: Widget, frame: Frame): string | null {
     if (!key || frame.columns.has(key)) return null;
     return frame.errors.get(key) ?? `「${columnLabel(frame.meta, key) || key}」列がデータにありません`;
   };
-  const isNumber = (key: string) => frame.columns.get(key)?.type === "number";
+  const isNumber = (key: string) => {
+    const t = frame.columns.get(key)?.type;
+    return t !== undefined && isContinuousType(t);
+  };
   const isCategory = (key: string) => {
     const t = frame.columns.get(key)?.type;
-    return t === "category" || t === "text";
+    return t !== undefined && isDimensionType(t);
   };
   const badMeasure = "集計方法が列の種類に合っていません";
   switch (w.kind) {
@@ -57,7 +61,7 @@ export function widgetProblem(w: Widget, frame: Frame): string | null {
     case "histogram":
       if (!w.column) return "数値の列がありません";
       if (missing(w.column)) return missing(w.column);
-      return frame.columns.get(w.column)!.type === "number" ? null : "数値の列を選んでください";
+      return isNumber(w.column) ? null : "数値の列を選んでください";
     case "scatter":
       if (!w.x || !w.y) return "数値の列が 2 つ必要です";
       if (missing(w.x) || missing(w.y)) return missing(w.x) ?? missing(w.y);
@@ -135,7 +139,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         const bins = histogram(frame, rows, w.column);
         if (bins.length === 0) return <Empty />;
         const meta = frame.meta.get(w.column);
-        return <Histogram bins={bins} formatX={(v) => formatNumber(v, meta, "compact")} xTitle={titles ? columnAxisTitle(meta, w.column) : undefined} color={color} />;
+        return <Histogram bins={bins} formatX={(v) => formatValue(v, meta, "compact")} xTitle={titles ? columnAxisTitle(meta, w.column) : undefined} color={color} />;
       }
       case "scatter": {
         const { points, groups } = scatterPoints(frame, rows, w.x, w.y, w.colorBy);
@@ -146,8 +150,8 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
           <ScatterChart
             points={points}
             groups={groups}
-            formatX={(v) => formatNumber(v, xm, "compact")}
-            formatY={(v) => formatNumber(v, ym, "compact")}
+            formatX={(v) => formatValue(v, xm, "compact")}
+            formatY={(v) => formatValue(v, ym, "compact")}
             xLabel={titles ? columnAxisTitle(xm, w.x) : (xm?.label ?? w.x)}
             yLabel={titles ? columnAxisTitle(ym, w.y) : (ym?.label ?? w.y)}
             color={color}

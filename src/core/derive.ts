@@ -150,7 +150,7 @@ export function evaluateFormula(stored: string, columns: Map<string, ColumnValue
   const arrays = new Map<string, Float64Array>();
   for (const key of formulaRefs(node)) {
     const col = columns.get(key)!;
-    if (col.type !== "number") throw new FormulaError(`列「${key}」は数値ではありません`);
+    if (col.type !== "number" && col.type !== "duration") throw new FormulaError(`列「${key}」は数値ではありません`);
     arrays.set(key, col.values);
   }
   const out = new Float64Array(rowCount);

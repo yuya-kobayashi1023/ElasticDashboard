@@ -1,5 +1,7 @@
 import { buildFrame } from "./frame";
-import { cellToString, inferColumns, parseDateValue, parseNumber, prefersAverage } from "./infer";
+import { isContinuousType, isDimensionType, isFloatType } from "./columnTypes";
+import { cellToString, inferColumns, prefersAverage } from "./infer";
+import { converterFor } from "./parsers";
 import { newId } from "./id";
 import type { ColumnMeta, ColumnType, Dashboard, DataSource, Filter, Frame, Measure, RawTable, Widget, WidgetKind } from "./types";
 
@@ -127,7 +129,7 @@ export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Fr
   const { measures, dimensions, dates } = columnRoles(columns, frame);
   const visible = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
   const primary = measureFor(measures[0]);
-  const anyDim = dimensions[0] ?? visible.find((c) => c.type === "category" || c.type === "text");
+  const anyDim = dimensions[0] ?? visible.find((c) => isDimensionType(c.type));
   switch (kind) {
     case "kpi":
       return { id, kind, title: "", span: 1, measure: primary };
@@ -136,7 +138,7 @@ export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Fr
     case "time":
       return { id, kind, title: "", span: 4, dateColumn: dates[0]?.key ?? "", bucket: "auto", measure: primary, split: null, mark: "line" };
     case "histogram":
-      return { id, kind, title: "", span: 2, column: measures[0]?.key ?? visible.find((c) => c.type === "number")?.key ?? "" };
+      return { id, kind, title: "", span: 2, column: measures[0]?.key ?? visible.find((c) => isContinuousType(c.type))?.key ?? "" };
     case "scatter": {
       const nums = measures.length >= 2 ? measures : visible.filter((c) => c.type === "number");
       return { id, kind, title: "", span: 2, x: nums[0]?.key ?? "", y: nums[1]?.key ?? nums[0]?.key ?? "", colorBy: null };
@@ -187,9 +189,9 @@ export interface ReplaceReport {
 }
 
 /** Whether ≥95% of the column's non-blank values convert to `type` (sampled for large data). */
-function fitsType(type: ColumnType, raw: RawTable, index: number): boolean {
-  if (type === "category" || type === "text") return true;
-  const fn = type === "number" ? parseNumber : parseDateValue;
+function fitsType(meta: ColumnMeta, raw: RawTable, index: number): boolean {
+  if (!isFloatType(meta.type)) return true;
+  const fn = converterFor(meta);
   const step = Math.max(1, Math.floor(raw.rows.length / 3000));
   let seen = 0;
   let ok = 0;
@@ -224,10 +226,12 @@ export function mergeColumns(
     if (!prev) return infer(h, i);
     // A type the user chose is always kept.
     if (prev.type !== prev.inferredType) return prev;
-    if (fitsType(prev.type, raw, i)) return prev;
+    if (fitsType(prev, raw, i)) return prev;
     const next = infer(h, i);
     if (next.type !== prev.type) retyped.push({ label: prev.label, from: prev.type, to: next.type });
-    return { ...prev, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format, dateUnit: next.dateUnit };
+    // Conversion options belonged to the old type.
+    const { parse: _parse, ...rest } = prev;
+    return { ...rest, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format, dateUnit: next.dateUnit };
   });
   const present = new Set(raw.headers);
   const derived = existing.filter((c) => c.derived);
