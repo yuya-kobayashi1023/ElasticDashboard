@@ -11,12 +11,14 @@ interface Props {
   selected: string[];
   onToggle?: (label: string) => void;
   color?: string;
+  /** Caption saying what the bar length means, with unit. */
+  valueTitle?: string;
 }
 
 const ROW = 32;
 const BAR_H = 20;
 
-export function BarChart({ bars, format, showShare, selected, onToggle, color = "var(--series-1)" }: Props) {
+export function BarChart({ bars, format, showShare, selected, onToggle, color = "var(--series-1)", valueTitle }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const [hover, setHover] = useState<number | null>(null);
@@ -34,6 +36,7 @@ export function BarChart({ bars, format, showShare, selected, onToggle, color = 
 
   return (
     <div className="chart" ref={ref} onMouseLeave={() => setHover(null)}>
+      {valueTitle && <div className="axis-title">{valueTitle}</div>}
       {width > 0 && (
         <svg width={width} height={height} role="group" aria-label="棒グラフ">
           <line className="base-line" x1={x(0)} x2={x(0)} y1={0} y2={height} />

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { TimeSeriesResult } from "../../core/aggregate";
 import { formatDate, formatTick } from "../../core/format";
-import { OTHER_COLOR, SERIES_COLORS, clampTooltip, linear, niceTicks, textWidth, useChartHeight, useWidth, vBarPath } from "./util";
+import { OTHER_COLOR, SERIES_COLORS, clampTooltip, linear, niceTicks, textWidth, truncate, useChartHeight, useWidth, vBarPath } from "./util";
 import { SeriesSwatch, TexOverlay } from "./Texture";
 import { useChartFont } from "../ThemeScope";
 
@@ -16,12 +16,14 @@ interface Props {
   height?: number;
   /** Color for a single series. */
   color?: string;
+  /** Value-axis title (measure and unit), drawn above the plot. */
+  yTitle?: string;
 }
 
 const M = { top: 10, right: 14, bottom: 28 };
 
 
-export function TimeChart({ data, mark, stackable, format, formatAxis, height: fixedHeight, color }: Props) {
+export function TimeChart({ data, mark, stackable, format, formatAxis, height: fixedHeight, color, yTitle }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const autoHeight = useChartHeight(0.32, 200, 440);
@@ -67,8 +69,9 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
   const endLabel = single && n > 0 ? format(series[0].values[n - 1]) : "";
   const right = M.right + (single ? textWidth(endLabel, fs) + 8 : 0);
   const innerW = Math.max(10, width - left - right);
-  const plotH = height - M.top - M.bottom;
-  const y = linear(yMin, yMax, M.top + plotH, M.top);
+  const top = M.top + (yTitle ? 16 : 0);
+  const plotH = height - top - M.bottom;
+  const y = linear(yMin, yMax, top + plotH, top);
 
   const band = innerW / Math.max(1, n);
   const xCenter = (i: number) => (useColumns ? left + band * (i + 0.5) : n === 1 ? left + innerW / 2 : left + (innerW * i) / (n - 1));
@@ -136,6 +139,11 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
               e.preventDefault();
             }}
           >
+            {yTitle && (
+              <text className="axis-title-text" x={left - 8} y={M.top + 4} textAnchor="start">
+                {truncate(yTitle, Math.max(40, width - left), fs)}
+              </text>
+            )}
             {ticks.map((t) => (
               <g key={t}>
                 <line className={t === 0 ? "base-line" : "grid-line"} x1={left} x2={left + innerW} y1={y(t)} y2={y(t)} />
@@ -229,7 +237,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
 
             {hover !== null && (
               <g pointerEvents="none">
-                <line className="crosshair" x1={xCenter(hover)} x2={xCenter(hover)} y1={M.top} y2={M.top + plotH} />
+                <line className="crosshair" x1={xCenter(hover)} x2={xCenter(hover)} y1={top} y2={top + plotH} />
                 {!useColumns &&
                   series.map((s, si) =>
                     Number.isNaN(s.values[hover]) ? null : (
@@ -241,7 +249,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
           </svg>
         )}
         {hover !== null && buckets[hover] !== undefined && (
-          <div className="chart-tooltip" style={{ left: clampTooltip(xCenter(hover), width), top: M.top }} role="status">
+          <div className="chart-tooltip" style={{ left: clampTooltip(xCenter(hover), width), top }} role="status">
             <div className="tt-title">{formatDate(buckets[hover], bucket)}</div>
             {hoverRows.length === 0 && <div className="muted">データなし</div>}
             {[...hoverRows]

@@ -1,5 +1,5 @@
 import type { ResolvedBucket } from "./aggregate";
-import type { Agg, ColumnMeta, ColumnType, Measure, Widget } from "./types";
+import type { Agg, ColumnMeta, ColumnType, Measure, NumberStyle, Widget } from "./types";
 
 export const AGG_LABEL: Record<Agg, string> = {
   count: "件数",
@@ -29,12 +29,53 @@ export const BUCKET_LABEL: Record<ResolvedBucket | "auto", string> = {
 const full = new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 2 });
 const compact = new Intl.NumberFormat("ja-JP", { notation: "compact", maximumFractionDigits: 1 });
 
+let numberStyle: NumberStyle = "en";
+
+/** Module-level because number formatting is called from many places; set once per dashboard theme. */
+export function setNumberStyle(style: NumberStyle | undefined): void {
+  numberStyle = style ?? "en";
+}
+
+export function getNumberStyle(): NumberStyle {
+  return numberStyle;
+}
+
+const EN_UNITS: [number, string][] = [
+  [1e12, "T"],
+  [1e9, "B"],
+  [1e6, "M"],
+  [1e3, "k"],
+];
+
+function compactEn(v: number): string {
+  const abs = Math.abs(v);
+  let i = EN_UNITS.findIndex(([base]) => abs >= base);
+  let [base, unit] = EN_UNITS[i];
+  let n = Math.round((abs / base) * 10) / 10;
+  // 999.96k rounds up to 1000k: move to the next unit.
+  if (n >= 1000 && i > 0) {
+    i -= 1;
+    [base, unit] = EN_UNITS[i];
+    n = Math.round((abs / base) * 10) / 10;
+  }
+  return `${v < 0 ? "-" : ""}${n.toLocaleString("en-US", { maximumFractionDigits: 1 })}${unit}`;
+}
+
+/** Compact form of a number in the current style, or null when it stays in full digits. */
+function compactBody(v: number): string | null {
+  const abs = Math.abs(v);
+  if (numberStyle === "en" && abs >= 1000) return compactEn(v);
+  if (numberStyle === "ja" && abs >= 10000) return compact.format(v);
+  return null;
+}
+
 export function formatNumber(v: number, meta?: ColumnMeta | null, style: "full" | "compact" = "full"): string {
   if (Number.isNaN(v)) return "—";
   const prefix = meta?.format.prefix ?? "";
   const suffix = meta?.format.suffix ?? "";
   let body: string;
-  if (style === "compact" && Math.abs(v) >= 10000) body = compact.format(v);
+  const short = style === "compact" ? compactBody(v) : null;
+  if (short !== null) body = short;
   else if (meta && meta.format.decimals !== null) {
     body = v.toLocaleString("ja-JP", { minimumFractionDigits: meta.format.decimals, maximumFractionDigits: meta.format.decimals });
   } else body = full.format(v);
@@ -109,6 +150,26 @@ export function formatMeasure(v: number, m: Measure, meta: Map<string, ColumnMet
     return formatNumber(v, { ...col, format: { ...col.format, decimals: null } }, style);
   }
   return formatNumber(v, col, style);
+}
+
+function unitOf(col: ColumnMeta | undefined): string {
+  return (col?.format.suffix || col?.format.prefix || "").trim();
+}
+
+function withUnit(title: string, unit: string): string {
+  return unit ? `${title}（${unit}）` : title;
+}
+
+/** Axis title for a measure: its label plus the column's unit, e.g. "売上金額の合計（円）". */
+export function measureAxisTitle(m: Measure, meta: Map<string, ColumnMeta>): string {
+  if (m.agg === "count" || m.agg === "distinct" || !m.column) return measureLabel(m, meta);
+  const col = meta.get(m.column);
+  return withUnit(measureLabel(m, meta), col?.type === "date" ? "" : unitOf(col));
+}
+
+/** Axis title for a plain column, with its unit when it has one. */
+export function columnAxisTitle(meta: ColumnMeta | null | undefined, fallback = ""): string {
+  return meta ? withUnit(meta.label, unitOf(meta)) : fallback;
 }
 
 /** "地域別の" — but "種別ごとの" so 別 is not doubled. */

@@ -398,6 +398,14 @@ textarea {
 .chart .tick-num {
   font-variant-numeric: tabular-nums;
 }
+.chart .axis-title-text {
+  fill: var(--text-secondary);
+}
+.chart .axis-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
 .chart .value-label {
   fill: var(--text-primary);
   font-variant-numeric: tabular-nums;

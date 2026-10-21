@@ -273,6 +273,13 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
 
           {usesColor(widget) && <ColorField value={widget.color ?? 0} onChange={(color) => set({ color })} />}
 
+          {(widget.kind === "bar" || widget.kind === "time" || widget.kind === "histogram" || widget.kind === "scatter") && (
+            <label className="checkbox">
+              <input type="checkbox" checked={widget.axisTitles !== false} onChange={(e) => set({ axisTitles: e.target.checked })} />
+              軸のタイトルと単位を表示する
+            </label>
+          )}
+
           <div className="field">
             <span className="field-label" id="span-label">
               幅

@@ -9,10 +9,13 @@ export const DEFAULT_THEME: Theme = {
   radius: "standard",
   fontSize: "standard",
   texture: false,
+  numberStyle: "en",
 };
 
 export function resolveTheme(t: Theme | undefined): Theme {
-  return { ...DEFAULT_THEME, ...t };
+  const r = { ...DEFAULT_THEME, ...t };
+  if (!r.numberStyle) r.numberStyle = "en";
+  return r;
 }
 
 interface SurfaceTokens {

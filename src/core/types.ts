@@ -80,6 +80,8 @@ interface WidgetBase {
   span: Span;
   /** Palette slot (0-7) for single-series charts; undefined = slot 0 */
   color?: number;
+  /** Show value-axis titles with units on charts; undefined = shown */
+  axisTitles?: boolean;
 }
 
 export type CompareBucket = "day" | "week" | "month" | "quarter" | "year";
@@ -188,6 +190,7 @@ export interface Dashboard {
 }
 
 export type SurfaceTheme = "warm" | "white" | "dark";
+export type NumberStyle = "en" | "ja" | "full";
 export type PaletteName = "calm" | "vivid" | "custom";
 
 export interface Theme {
@@ -201,6 +204,8 @@ export interface Theme {
   fontSize: "standard" | "large";
   /** Add line patterns / dash styles to multi-series charts. Always on when printing. */
   texture?: boolean;
+  /** How large numbers are abbreviated on charts. Missing = "en". */
+  numberStyle?: NumberStyle;
 }
 
 export interface DashboardSummary {

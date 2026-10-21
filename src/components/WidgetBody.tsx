@@ -1,7 +1,7 @@
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
 import { aggregate, comparePeriods, filterRows, groupBy, histogram, measureIsValid, pivot, scatterPoints, timeSeries, timeSeriesColumns } from "../core/aggregate";
-import { columnLabel, formatMeasure, formatNumber } from "../core/format";
+import { columnAxisTitle, columnLabel, formatMeasure, formatNumber, measureAxisTitle } from "../core/format";
 import type { Filter, Frame, Widget } from "../core/types";
 import { BarChart } from "./charts/BarChart";
 import { Histogram } from "./charts/Histogram";
@@ -10,6 +10,7 @@ import { PivotTable } from "./charts/PivotTable";
 import { ScatterChart } from "./charts/ScatterChart";
 import { TimeChart } from "./charts/TimeChart";
 import { DataTable } from "./DataTable";
+import { useNumberStyle } from "./ThemeScope";
 
 interface Props {
   widget: Widget;
@@ -74,10 +75,12 @@ export function widgetProblem(w: Widget, frame: Frame): string | null {
 
 export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onFix }: Props) {
   const problem = widgetProblem(w, frame);
+  const numberStyle = useNumberStyle();
   const content = useMemo(() => {
     if (problem) return null;
     const fmt = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta);
     const fmtAxis = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta, "compact");
+    const titles = w.axisTitles !== false;
     const color = `var(--series-${(w.color ?? 0) + 1})`;
     const additive = (m: { agg: string }) => m.agg === "count" || m.agg === "sum";
     switch (w.kind) {
@@ -105,6 +108,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             showShare={additive(w.measure)}
             selected={sel}
             color={color}
+            valueTitle={titles ? measureAxisTitle(w.measure, frame.meta) : undefined}
             onToggle={onToggleValue && frame.columns.get(w.dimension)?.type !== "number" ? (label) => onToggleValue(w.dimension, label) : undefined}
           />
         );
@@ -114,13 +118,15 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
           ? timeSeriesColumns(frame, rows, w.dateColumn, w.bucket, w.measure.agg, w.series, (k) => columnLabel(frame.meta, k))
           : timeSeries(frame, rows, w.dateColumn, w.bucket, w.measure, w.split);
         if (data.buckets.length === 0) return <Empty />;
+        const timeMeasure = w.series?.length ? { agg: w.measure.agg === "count" ? "sum" : w.measure.agg, column: w.series[0] } : w.measure;
         return (
           <TimeChart
             data={data}
             mark={w.mark}
             stackable={additive(w.measure)}
-            format={fmt(w.series?.length ? { agg: w.measure.agg === "count" ? "sum" : w.measure.agg, column: w.series[0] } : w.measure)}
-            formatAxis={fmtAxis(w.series?.length ? { agg: w.measure.agg === "count" ? "sum" : w.measure.agg, column: w.series[0] } : w.measure)}
+            format={fmt(timeMeasure)}
+            formatAxis={fmtAxis(timeMeasure)}
+            yTitle={titles ? (w.series?.length ? columnAxisTitle(frame.meta.get(w.series[0]), "") : measureAxisTitle(w.measure, frame.meta)) : undefined}
             color={color}
           />
         );
@@ -129,7 +135,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         const bins = histogram(frame, rows, w.column);
         if (bins.length === 0) return <Empty />;
         const meta = frame.meta.get(w.column);
-        return <Histogram bins={bins} formatX={(v) => formatNumber(v, meta, "compact")} color={color} />;
+        return <Histogram bins={bins} formatX={(v) => formatNumber(v, meta, "compact")} xTitle={titles ? columnAxisTitle(meta, w.column) : undefined} color={color} />;
       }
       case "scatter": {
         const { points, groups } = scatterPoints(frame, rows, w.x, w.y, w.colorBy);
@@ -142,8 +148,8 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             groups={groups}
             formatX={(v) => formatNumber(v, xm, "compact")}
             formatY={(v) => formatNumber(v, ym, "compact")}
-            xLabel={xm?.label ?? w.x}
-            yLabel={ym?.label ?? w.y}
+            xLabel={titles ? columnAxisTitle(xm, w.x) : (xm?.label ?? w.x)}
+            yLabel={titles ? columnAxisTitle(ym, w.y) : (ym?.label ?? w.y)}
             color={color}
           />
         );
@@ -167,7 +173,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         return <DataTable frame={frame} rows={rows} columns={cols as NonNullable<(typeof cols)[number]>[]} pageSize={w.pageSize} />;
       }
     }
-  }, [w, frame, rows, filters, onToggleValue, problem]);
+  }, [w, frame, rows, filters, onToggleValue, problem, numberStyle]);
 
   if (problem) {
     return (

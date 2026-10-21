@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { comparePeriods, filterRows, groupBy, pivot, scatterPoints } from "./aggregate";
 import { createDashboard, mergeColumns } from "./autoDashboard";
 import { datePart, datePartOrder, displayFormula, FormulaError, parseFormula, toStoredFormula } from "./derive";
+import { formatNumber, measureAxisTitle, setNumberStyle } from "./format";
 import { planExport, renderExportHtml } from "./export";
 import { appendRows, countDuplicateRows, parseExportHtml } from "./exportFormat";
 import { buildFrame } from "./frame";
@@ -335,5 +336,33 @@ describe("wide tables", () => {
     const frame = buildFrame(data, cols);
     const r = timeSeriesColumns(frame, filterRows(frame, []), "Date", "month", "sum", ["Tokyo", "Osaka"], (k) => k);
     expect(r.series.map((x) => [x.label, x.values])).toEqual([["Tokyo", [22, 7]], ["Osaka", [9, 3]]]);
+  });
+});
+
+describe("number style and axis titles", () => {
+  const yen: ColumnMeta = { ...dash.columns[0], key: "a", label: "売上金額", type: "number", format: { decimals: 0, prefix: "", suffix: "円" } };
+  const temp: ColumnMeta = { ...yen, key: "t", label: "気温", format: { decimals: null, prefix: "", suffix: "℃" } };
+  const meta = new Map([["a", yen], ["t", temp]]);
+
+  it("abbreviates with en / ja / full styles", () => {
+    setNumberStyle("en");
+    expect(formatNumber(1500, null, "compact")).toBe("1.5k");
+    expect(formatNumber(100000, null, "compact")).toBe("100k");
+    expect(formatNumber(3_200_000, null, "compact")).toBe("3.2M");
+    expect(formatNumber(1_100_000_000, null, "compact")).toBe("1.1B");
+    expect(formatNumber(999, null, "compact")).toBe("999");
+    expect(formatNumber(-2500, null, "compact")).toBe("-2.5k");
+    setNumberStyle("ja");
+    expect(formatNumber(12000, null, "compact")).toBe("1.2万");
+    expect(formatNumber(1500, null, "compact")).toBe("1,500");
+    setNumberStyle("full");
+    expect(formatNumber(3_200_000, null, "compact")).toBe("3,200,000");
+    setNumberStyle("en");
+  });
+
+  it("builds axis titles with units", () => {
+    expect(measureAxisTitle({ agg: "sum", column: "a" }, meta)).toBe("売上金額の合計（円）");
+    expect(measureAxisTitle({ agg: "avg", column: "t" }, meta)).toBe("気温の平均（℃）");
+    expect(measureAxisTitle({ agg: "count", column: null }, meta)).toBe("件数");
   });
 });
