@@ -1,7 +1,7 @@
 import { CaretDownIcon, FunnelSimpleIcon, MagnifyingGlassIcon, PlusIcon, XIcon } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
-import { extent, filterRows, valueCounts } from "../core/aggregate";
-import { formatDate, formatNumber } from "../core/format";
+import { columnHasTime, extent, filterRows, valueCounts } from "../core/aggregate";
+import { formatDate, formatValue } from "../core/format";
 import { clearFilter, DATE_PRESETS, isFilterActive, presetRange } from "../core/filters";
 import { newId } from "../core/id";
 import type { ColumnMeta, DatePreset, Filter, Frame } from "../core/types";
@@ -65,7 +65,7 @@ export function FilterBar({ frame, filters, filteredCount, onChange }: Props) {
               className="popover-option"
               onClick={() => {
                 const f: Filter =
-                  c.type === "category"
+                  c.type === "category" || c.type === "boolean"
                     ? { id: newId(), column: c.key, kind: "values", values: [] }
                     : { id: newId(), column: c.key, kind: "range", min: null, max: null };
                 onChange([...filters, f]);
@@ -95,14 +95,14 @@ export function FilterBar({ frame, filters, filteredCount, onChange }: Props) {
   );
 }
 
-function summary(f: Filter, meta: ColumnMeta | undefined): string {
+function summary(f: Filter, meta: ColumnMeta | undefined, withTime = false): string {
   if (f.kind === "values") {
     if (f.values.length === 0) return "すべて";
     return f.values.length === 1 ? f.values[0] : `${f.values[0]} ほか${f.values.length - 1}件`;
   }
   if (f.preset) return DATE_PRESETS.find((p) => p.id === f.preset)?.label ?? "すべて";
   if (f.min === null && f.max === null) return "すべて";
-  const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, meta.dateUnit === "year" ? "year" : "day") : formatNumber(v, meta));
+  const fmt = (v: number) => (meta?.type === "date" ? formatDate(v, meta.dateUnit === "year" ? "year" : withTime ? "datetime" : "day") : formatValue(v, meta));
   if (f.min !== null && f.max !== null) return `${fmt(f.min)} 〜 ${fmt(f.max)}`;
   return f.min !== null ? `${fmt(f.min)} 以降` : `${fmt(f.max!)} まで`;
 }
@@ -121,6 +121,7 @@ function FilterChip({ filter, frame, filters, open, setOpen, onChange, onRemove 
   const meta = frame.meta.get(filter.column);
   const name = meta?.label ?? filter.column;
   const active = isActive(filter);
+  const withTime = useMemo(() => meta?.type === "date" && columnHasTime(frame, filter.column), [frame, filter.column, meta?.type]);
   return (
     <Popover
       open={open}
@@ -128,9 +129,9 @@ function FilterChip({ filter, frame, filters, open, setOpen, onChange, onRemove 
       label={`${name}で絞り込み`}
       trigger={
         <span className={`filter-chip${active ? " is-active" : ""}`}>
-          <button type="button" className="filter-chip-main" onClick={() => setOpen(!open)} aria-expanded={open} title={`${name}: ${summary(filter, meta)}`}>
+          <button type="button" className="filter-chip-main" onClick={() => setOpen(!open)} aria-expanded={open} title={`${name}: ${summary(filter, meta, withTime)}`}>
             <span className="chip-name">{name}</span>
-            <span className="chip-value">{summary(filter, meta)}</span>
+            <span className="chip-value">{summary(filter, meta, withTime)}</span>
             <CaretDownIcon size={12} aria-hidden />
           </button>
           <button type="button" className="filter-chip-x" aria-label={`${name}のフィルタを削除`} onClick={onRemove}>
@@ -205,11 +206,12 @@ function ValuesPicker({
   );
 }
 
-const toInputDate = (t: number | null) => (t === null ? "" : new Date(t).toISOString().slice(0, 10));
-const fromInputDate = (s: string, endOfDay: boolean) => {
+const toInputDate = (t: number | null, withTime = false) => (t === null ? "" : new Date(t).toISOString().slice(0, withTime ? 16 : 10));
+/** `end` makes the bound inclusive: the last millisecond of the chosen day (or minute with times). */
+const fromInputDate = (s: string, end: boolean, withTime = false) => {
   if (!s) return null;
-  const t = Date.parse(`${s}T00:00:00Z`);
-  return Number.isNaN(t) ? null : endOfDay ? t + DAY - 1 : t;
+  const t = Date.parse(withTime ? `${s}:00Z` : `${s}T00:00:00Z`);
+  return Number.isNaN(t) ? null : end ? t + (withTime ? 60000 : DAY) - 1 : t;
 };
 
 function RangePicker({
@@ -227,19 +229,22 @@ function RangePicker({
 }) {
   const ext = useMemo(() => extent(frame, filter.column), [frame, filter.column]);
   const isDate = meta?.type === "date";
+  const withTime = useMemo(() => isDate && columnHasTime(frame, filter.column), [frame, filter.column, isDate]);
   if (!ext) return <div className="muted">値がありません</div>;
   const [lo, hi] = ext;
 
   // Presets are stored by name and recomputed from the latest date, so they follow new data.
-  const presets: { label: string; preset: DatePreset | null }[] = isDate ? [{ label: "全期間", preset: null }, ...DATE_PRESETS.map((p) => ({ label: p.label, preset: p.id }))] : [];
+  const presets: { label: string; preset: DatePreset | null }[] = isDate ? [{ label: "全期間", preset: null }, ...DATE_PRESETS.filter((p) => withTime || p.id !== "last-24h").map((p) => ({ label: p.label, preset: p.id }))] : [];
   const presetSelected = (p: DatePreset | null) => (p === null ? !filter.preset && filter.min === null && filter.max === null : filter.preset === p);
+  // Width of the inclusive end bound: a day, or a minute when times are shown.
+  const span = withTime ? 60000 : DAY;
   const shown = filter.preset ? presetRange(filter.preset, hi) : null;
 
   return (
     <>
       {isDate && (
         <>
-          <div className="field-label">データの期間 {formatDate(lo)} 〜 {formatDate(hi)}</div>
+          <div className="field-label">データの期間 {formatDate(lo, withTime ? "datetime" : "day")} 〜 {formatDate(hi, withTime ? "datetime" : "day")}</div>
           <div className="preset-row" style={{ marginTop: 6 }}>
             {presets.map((p) => (
               <button
@@ -258,30 +263,30 @@ function RangePicker({
       )}
       <div className="range-grid">
         <label className="field">
-          <span className="field-label">{isDate ? "開始日" : "最小"}</span>
+          <span className="field-label">{isDate ? (withTime ? "開始" : "開始日") : "最小"}</span>
           {isDate ? (
             <input
-              type="date"
+              type={withTime ? "datetime-local" : "date"}
               className="input input-sm"
-              value={toInputDate(shown ? shown[0] : filter.min)}
-              min={toInputDate(lo)}
-              max={toInputDate(hi)}
-              onChange={(e) => onChange({ ...filter, preset: null, max: shown ? shown[1] : filter.max, min: fromInputDate(e.target.value, false) })}
+              value={toInputDate(shown ? shown[0] : filter.min, withTime)}
+              min={toInputDate(lo, withTime)}
+              max={toInputDate(hi, withTime)}
+              onChange={(e) => onChange({ ...filter, preset: null, max: shown ? shown[1] : filter.max, min: fromInputDate(e.target.value, false, withTime) })}
             />
           ) : (
             <input type="number" className="input input-sm" value={filter.min ?? ""} placeholder={String(lo)} onChange={(e) => onChange({ ...filter, min: e.target.value === "" ? null : Number(e.target.value) })} />
           )}
         </label>
         <label className="field">
-          <span className="field-label">{isDate ? "終了日" : "最大"}</span>
+          <span className="field-label">{isDate ? (withTime ? "終了" : "終了日") : "最大"}</span>
           {isDate ? (
             <input
-              type="date"
+              type={withTime ? "datetime-local" : "date"}
               className="input input-sm"
-              value={toInputDate(shown ? shown[1] - DAY + 1 : filter.max === null ? null : filter.max - DAY + 1)}
-              min={toInputDate(lo)}
-              max={toInputDate(hi)}
-              onChange={(e) => onChange({ ...filter, preset: null, min: shown ? shown[0] : filter.min, max: fromInputDate(e.target.value, true) })}
+              value={toInputDate(shown ? (withTime ? shown[1] : shown[1] - DAY + 1) : filter.max === null ? null : filter.max - span + 1, withTime)}
+              min={toInputDate(lo, withTime)}
+              max={toInputDate(hi, withTime)}
+              onChange={(e) => onChange({ ...filter, preset: null, min: shown ? shown[0] : filter.min, max: fromInputDate(e.target.value, true, withTime) })}
             />
           ) : (
             <input type="number" className="input input-sm" value={filter.max ?? ""} placeholder={String(hi)} onChange={(e) => onChange({ ...filter, max: e.target.value === "" ? null : Number(e.target.value) })} />

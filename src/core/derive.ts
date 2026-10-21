@@ -150,7 +150,7 @@ export function evaluateFormula(stored: string, columns: Map<string, ColumnValue
   const arrays = new Map<string, Float64Array>();
   for (const key of formulaRefs(node)) {
     const col = columns.get(key)!;
-    if (col.type !== "number") throw new FormulaError(`列「${key}」は数値ではありません`);
+    if (col.type !== "number" && col.type !== "duration") throw new FormulaError(`列「${key}」は数値ではありません`);
     arrays.set(key, col.values);
   }
   const out = new Float64Array(rowCount);
@@ -188,6 +188,7 @@ export const DATE_PART_LABEL: Record<DatePart, string> = {
   weekday: "曜日",
   day: "日",
   hour: "時",
+  minute: "分",
 };
 
 /** Fixed category order so charts sort weekdays and months naturally. */
@@ -203,6 +204,8 @@ export function datePartOrder(part: DatePart): string[] | undefined {
       return Array.from({ length: 31 }, (_, i) => `${i + 1}日`);
     case "hour":
       return Array.from({ length: 24 }, (_, i) => `${i}時`);
+    case "minute":
+      return Array.from({ length: 60 }, (_, i) => `${i}分`);
     default:
       return undefined;
   }
@@ -228,6 +231,8 @@ export function datePart(t: number, part: DatePart): string | null {
       return `${d.getUTCDate()}日`;
     case "hour":
       return `${d.getUTCHours()}時`;
+    case "minute":
+      return `${d.getUTCMinutes()}分`;
   }
 }
 

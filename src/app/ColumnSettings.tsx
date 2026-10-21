@@ -1,17 +1,18 @@
-import { ArrowCounterClockwiseIcon, CalculatorIcon, TreeStructureIcon, EyeIcon, EyeSlashIcon, MagicWandIcon, PencilSimpleIcon, TrashIcon } from "@phosphor-icons/react";
+import { ArrowCounterClockwiseIcon, CalculatorIcon, TreeStructureIcon, EyeIcon, EyeSlashIcon, MagicWandIcon, PencilSimpleIcon, SlidersHorizontalIcon, TrashIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { describeDerived, lookupKeys } from "../core/derive";
 import { DerivedDialog } from "./DerivedDialog";
+import { ParseDialog } from "./ParseDialog";
 import { LookupDialog } from "./LookupDialog";
 import { autoFilters, autoWidgets } from "../core/autoDashboard";
 import { columnStatsAsync, type ColumnStats } from "../core/frame";
-import { columnLabel, formatDate, formatNumber, TYPE_LABEL } from "../core/format";
+import { columnLabel, formatValue, TYPE_LABEL } from "../core/format";
 import type { ColumnMeta, ColumnType, Frame, Lookup, NumberFormat, RawTable } from "../core/types";
 import { TypeIcon } from "../components/TypeIcon";
 import { useApp, useToasts } from "./store";
 
 const count = new Intl.NumberFormat("ja-JP");
-const TYPES: ColumnType[] = ["number", "date", "category", "text"];
+const TYPES: ColumnType[] = ["number", "date", "time", "duration", "boolean", "category", "text"];
 
 /** `frame` is the dashboard's already built frame (null while a large dataset is still being prepared). */
 export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | null }) {
@@ -22,8 +23,7 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
   useEffect(() => {
     if (!frame) return;
     const signal = { cancelled: false };
-    const format = (v: number, c: ColumnMeta) => (c.type === "date" ? formatDate(v, c.dateUnit === "year" ? "year" : "day") : formatNumber(v, c));
-    void columnStatsAsync(raw, dashboard.columns, frame, format, signal).then((m) => {
+    void columnStatsAsync(raw, dashboard.columns, frame, formatValue, signal).then((m) => {
       if (m && !signal.cancelled) setStats(m);
     });
     return () => {
@@ -52,6 +52,7 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
       action: { label: "元に戻す", run: () => useApp.getState().undo() },
     });
   };
+  const [parseKey, setParseKey] = useState<string | null>(null);
   const [editingDerived, setEditingDerived] = useState<ColumnMeta | null>(null);
   const openDerived = (c: ColumnMeta | null) => {
     setEditingDerived(c);
@@ -199,7 +200,10 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
                         className="select select-sm"
                         value={c.type}
                         disabled={!!c.derived}
-                        onChange={(e) => patch(c.key, { type: e.target.value as ColumnType })}
+                        onChange={(e) => {
+                          const type = e.target.value as ColumnType;
+                          patch(c.key, { type, parse: type === c.inferredType ? c.inferredParse : undefined });
+                        }}
                       >
                         {TYPES.map((t) => (
                           <option key={t} value={t}>
@@ -208,12 +212,20 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
                           </option>
                         ))}
                       </select>
+                      {!c.derived && (
+                        <button type="button" className="icon-btn" aria-label={`${c.label}の解釈の設定`} title="解釈の設定" onClick={() => setParseKey(c.key)}>
+                          <SlidersHorizontalIcon size={16} weight={c.parse ? "fill" : "regular"} />
+                        </button>
+                      )}
                       {c.type !== c.inferredType && (
-                        <button type="button" className="icon-btn" aria-label="自動判定に戻す" title="自動判定に戻す" onClick={() => patch(c.key, { type: c.inferredType })}>
+                        <button type="button" className="icon-btn" aria-label="自動判定に戻す" title="自動判定に戻す" onClick={() => patch(c.key, { type: c.inferredType, parse: c.inferredParse })}>
                           <ArrowCounterClockwiseIcon size={16} />
                         </button>
                       )}
                     </div>
+                    {!c.derived && (
+                      <div className="cell-caption">{c.type !== c.inferredType ? "手動で変更" : c.inferredReason ? `自動判定: ${c.inferredReason}` : ""}</div>
+                    )}
                   </td>
                   <td>
                     {c.type === "number" ? (
@@ -322,6 +334,7 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
           </tbody>
         </table>
       </div>
+      <ParseDialog open={parseKey !== null} columnKey={parseKey} raw={raw} onClose={() => setParseKey(null)} />
       <DerivedDialog open={derivedOpen} editing={editingDerived} raw={raw} onClose={() => setDerivedOpen(false)} />
       <LookupDialog open={lookupOpen} raw={raw} editing={editingLookup} frame={frame} onClose={() => setLookupOpen(false)} />
     </div>

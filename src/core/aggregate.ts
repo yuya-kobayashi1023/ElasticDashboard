@@ -1,8 +1,12 @@
+import { aggsFor, isContinuousType, isFloatColumn } from "./columnTypes";
+import { datePart, datePartOrder } from "./derive";
 import { isFilterActive, presetRange } from "./filters";
-import type { Agg, BarSort, Filter, Frame, Measure, TimeBucket } from "./types";
+import type { Agg, BarSort, Filter, Frame, HeatAxis, Measure, TimeBucket } from "./types";
 
 export const BLANK_LABEL = "(空欄)";
 export const OTHER_LABEL = "その他";
+export const TRUE_LABEL = "はい";
+export const FALSE_LABEL = "いいえ";
 
 export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: string): Uint32Array {
   const active = filters.filter((f) => {
@@ -15,10 +19,14 @@ export function filterRows(frame: Frame, filters: Filter[], skipFilterId?: strin
     const col = frame.columns.get(f.column)!;
     if (f.kind === "values") {
       const set = new Set(f.values);
-      if (col.type === "number" || col.type === "date") return (i: number) => set.has(String(col.values[i]));
+      if (col.type === "boolean") {
+        const label = labelGetter(frame, f.column);
+        return (i: number) => set.has(label(i));
+      }
+      if (isFloatColumn(col)) return (i: number) => set.has(String(col.values[i]));
       return (i: number) => set.has(col.values[i] ?? BLANK_LABEL);
     }
-    if (col.type !== "number" && col.type !== "date") return () => true;
+    if (!isFloatColumn(col)) return () => true;
     let lo = f.min ?? -Infinity;
     let hi = f.max ?? Infinity;
     if (f.preset && col.type === "date") {
@@ -89,7 +97,7 @@ function feeder(frame: Frame, measure: Measure): (acc: Acc, i: number) => void {
       if (v !== null && !(typeof v === "number" && Number.isNaN(v))) acc.set!.add(String(v));
     };
   }
-  if (col.type !== "number" && col.type !== "date") return (acc) => void acc.count++;
+  if (!isFloatColumn(col)) return (acc) => void acc.count++;
   const values = col.values;
   return (acc, i) => {
     acc.count++;
@@ -106,8 +114,7 @@ export function measureIsValid(frame: Frame, m: Measure): boolean {
   if (m.agg === "count") return true;
   if (!m.column || !frame.columns.has(m.column)) return false;
   if (m.agg === "distinct") return true;
-  const t = frame.columns.get(m.column)!.type;
-  return t === "number" || (t === "date" && (m.agg === "min" || m.agg === "max"));
+  return aggsFor(frame.columns.get(m.column)!.type).includes(m.agg);
 }
 
 export function aggregate(frame: Frame, rows: Uint32Array, measure: Measure): number {
@@ -119,7 +126,10 @@ export function aggregate(frame: Frame, rows: Uint32Array, measure: Measure): nu
 
 function labelGetter(frame: Frame, key: string): (i: number) => string {
   const col = frame.columns.get(key)!;
-  if (col.type === "number" || col.type === "date") {
+  if (col.type === "boolean") {
+    return (i) => (Number.isNaN(col.values[i]) ? BLANK_LABEL : col.values[i] ? TRUE_LABEL : FALSE_LABEL);
+  }
+  if (isFloatColumn(col)) {
     return (i) => (Number.isNaN(col.values[i]) ? BLANK_LABEL : String(col.values[i]));
   }
   return (i) => col.values[i] ?? BLANK_LABEL;
@@ -156,7 +166,9 @@ export function groupBy(
   sort: BarSort,
   /** Explicit category order used by the "label" sort (weekdays, months). */
   order?: string[],
-): { bars: Bar[]; total: number } {
+  /** false drops the groups beyond `limit` instead of folding them into "その他". */
+  otherBucket = true,
+): { bars: Bar[]; total: number; sum: number } {
   const groups = groupAccs(frame, rows, key, measure);
   const entries = [...groups].map(([label, acc]) => ({ label, acc, value: finish(acc, measure.agg) }));
   const byValue = (a: { value: number }, b: { value: number }) => (Number.isNaN(a.value) ? 1 : Number.isNaN(b.value) ? -1 : b.value - a.value);
@@ -166,7 +178,7 @@ export function groupBy(
   if (entries.length > limit) {
     kept = entries.slice(0, limit);
     const rest = entries.slice(limit).reduce((a, e) => mergeAcc(a, e.acc), newAcc(measure.agg));
-    other = { label: `${OTHER_LABEL} (${entries.length - limit})`, value: finish(rest, measure.agg), isOther: true };
+    if (otherBucket) other = { label: `${OTHER_LABEL} (${entries.length - limit})`, value: finish(rest, measure.agg), isOther: true };
   }
   const bars: Bar[] = kept.map((e) => ({ label: e.label, value: e.value, isOther: false }));
   if (sort === "value-asc") bars.reverse();
@@ -175,18 +187,37 @@ export function groupBy(
     bars.sort((a, b) => (rank ? (rank.get(a.label) ?? 1e9) - (rank.get(b.label) ?? 1e9) : 0) || collator.compare(a.label, b.label));
   }
   if (other) bars.push(other);
-  return { bars, total: entries.length };
+  // Over every group, so shares stay correct when the rest is not shown.
+  const sum = entries.reduce((a, e) => (Number.isNaN(e.value) ? a : a + e.value), 0);
+  return { bars, total: entries.length, sum };
 }
 
 const DAY = 86400000;
+const HOUR = 3600000;
+const MINUTE = 60000;
+const SECOND = 1000;
 
 export type ResolvedBucket = Exclude<TimeBucket, "auto">;
+
+/** True when any value of a date column is not at midnight (UTC, as dates are stored). */
+export function columnHasTime(frame: Frame, key: string): boolean {
+  const col = frame.columns.get(key);
+  if (!col || col.type !== "date") return col?.type === "time";
+  for (const v of col.values) if (!Number.isNaN(v) && v % DAY !== 0) return true;
+  return false;
+}
 
 export function floorDate(t: number, bucket: ResolvedBucket): number {
   const d = new Date(t);
   const y = d.getUTCFullYear();
   const m = d.getUTCMonth();
   switch (bucket) {
+    case "second":
+      return Math.floor(t / SECOND) * SECOND;
+    case "minute":
+      return Math.floor(t / MINUTE) * MINUTE;
+    case "hour":
+      return Math.floor(t / HOUR) * HOUR;
     case "day":
       return Date.UTC(y, m, d.getUTCDate());
     case "week": {
@@ -206,6 +237,12 @@ export function floorDate(t: number, bucket: ResolvedBucket): number {
 export function nextBucket(t: number, bucket: ResolvedBucket): number {
   const d = new Date(t);
   switch (bucket) {
+    case "second":
+      return t + SECOND;
+    case "minute":
+      return t + MINUTE;
+    case "hour":
+      return t + HOUR;
     case "day":
       return t + DAY;
     case "week":
@@ -219,21 +256,39 @@ export function nextBucket(t: number, bucket: ResolvedBucket): number {
   }
 }
 
-const ORDER: ResolvedBucket[] = ["day", "week", "month", "quarter", "year"];
+const ORDER: ResolvedBucket[] = ["second", "minute", "hour", "day", "week", "month", "quarter", "year"];
+const SUB_DAY: ResolvedBucket[] = ["second", "minute", "hour"];
 
-export function resolveBucket(bucket: TimeBucket, min: number, max: number): ResolvedBucket {
-  const spanDays = (max - min) / DAY;
+/** Most points an auto unit may produce; an explicit unit is allowed more. */
+export const AUTO_MAX_POINTS = 1000;
+export const EXPLICIT_MAX_POINTS = 5000;
+
+const APPROX_DAYS: Record<ResolvedBucket, number> = { second: 1 / 86400, minute: 1 / 1440, hour: 1 / 24, day: 1, week: 7, month: 30, quarter: 91, year: 365 };
+
+/** `hasTime` false (every value at midnight) never yields a sub-day bucket. */
+export function resolveBucket(bucket: TimeBucket, min: number, max: number, hasTime = true): ResolvedBucket {
+  return resolveBucketDetailed(bucket, min, max, hasTime).bucket;
+}
+
+/** `requested` is set only when the unit had to be coarsened to keep the point count renderable. */
+export function resolveBucketDetailed(bucket: TimeBucket, min: number, max: number, hasTime = true): { bucket: ResolvedBucket; requested?: ResolvedBucket } {
+  const span = max - min;
+  const spanDays = span / DAY;
   let b: ResolvedBucket;
   if (bucket !== "auto") b = bucket;
+  else if (span <= 2 * MINUTE) b = "second";
+  else if (span <= 2 * HOUR) b = "minute";
+  else if (span <= 3 * DAY) b = "hour";
   else if (spanDays <= 62) b = "day";
   else if (spanDays <= 270) b = "week";
   else if (spanDays <= 365 * 5) b = "month";
   else if (spanDays <= 365 * 12) b = "quarter";
   else b = "year";
-  // Keep the point count renderable.
-  const approx: Record<ResolvedBucket, number> = { day: 1, week: 7, month: 30, quarter: 91, year: 365 };
-  while (b !== "year" && spanDays / approx[b] > 1000) b = ORDER[ORDER.indexOf(b) + 1];
-  return b;
+  if (!hasTime && SUB_DAY.includes(b)) b = "day";
+  const wanted = b;
+  const limit = bucket === "auto" ? AUTO_MAX_POINTS : EXPLICIT_MAX_POINTS;
+  while (b !== "year" && spanDays / APPROX_DAYS[b] > limit) b = ORDER[ORDER.indexOf(b) + 1];
+  return b === wanted ? { bucket: b } : { bucket: b, requested: wanted };
 }
 
 export interface Series {
@@ -243,6 +298,10 @@ export interface Series {
 
 export interface TimeSeriesResult {
   bucket: ResolvedBucket;
+  /** The unit that was asked for when it produced too many points and `bucket` is coarser. */
+  requestedBucket?: ResolvedBucket;
+  /** The x axis is a time-of-day column (buckets are ms from 1970-01-01 00:00), so labels show no date. */
+  timeOfDay?: boolean;
   buckets: number[];
   series: Series[];
 }
@@ -258,8 +317,10 @@ export function timeSeries(
   splitKey: string | null,
 ): TimeSeriesResult {
   const dateCol = frame.columns.get(dateKey);
-  if (!dateCol || dateCol.type !== "date") return { bucket: "day", buckets: [], series: [] };
-  const dates = dateCol.values;
+  if (!dateCol || (dateCol.type !== "date" && dateCol.type !== "time")) return { bucket: "day", buckets: [], series: [] };
+  const timeOfDay = dateCol.type === "time";
+  // Seconds since midnight are read as ms on 1970-01-01 so the date bucketing applies unchanged.
+  const dates = timeOfDay ? Float64Array.from(dateCol.values, (v) => v * 1000) : dateCol.values;
   let min = Infinity;
   let max = -Infinity;
   for (const i of rows) {
@@ -269,7 +330,9 @@ export function timeSeries(
     if (t > max) max = t;
   }
   if (min === Infinity) return { bucket: "day", buckets: [], series: [] };
-  const b = resolveBucket(bucket, min, max);
+  // Time-of-day columns have no day or larger units; a day-level choice falls back to hours.
+  const requested: TimeBucket = timeOfDay && bucket !== "second" && bucket !== "minute" ? "hour" : bucket;
+  const { bucket: b, requested: coarsenedFrom } = resolveBucketDetailed(requested, min, max, timeOfDay || columnHasTime(frame, dateKey));
   const buckets: number[] = [];
   for (let t = floorDate(min, b); t <= max; t = nextBucket(t, b)) buckets.push(t);
   const bucketIndex = new Map(buckets.map((t, i) => [t, i]));
@@ -303,7 +366,7 @@ export function timeSeries(
     const merged = buckets.map((_, bi) => keys.slice(MAX_SERIES).reduce((a, k) => mergeAcc(a, perSeries.get(k)![bi]), newAcc(measure.agg)));
     series.push({ label: `${OTHER_LABEL} (${keys.length - MAX_SERIES})`, values: merged.map(emptyValue) });
   }
-  return { bucket: b, buckets, series };
+  return { bucket: b, buckets, series, ...(coarsenedFrom ? { requestedBucket: coarsenedFrom } : {}), ...(timeOfDay ? { timeOfDay } : {}) };
 }
 
 export interface Bin {
@@ -321,9 +384,24 @@ export function niceStep(range: number, target: number): number {
   return step * mag;
 }
 
-export function histogram(frame: Frame, rows: Uint32Array, key: string): Bin[] {
+const DURATION_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+
+/** Round step (seconds) for a duration axis: 1/2/5/10/15/30 s or min, 1/2/3/6/12 h, then 1/2/5×10^n days. 0 when the range is under a second. */
+export function durationStep(range: number, target: number): number {
+  if (range <= 0 || !Number.isFinite(range)) return 0;
+  const raw = range / target;
+  if (raw < 0.5) return 0;
+  const step = DURATION_STEPS.find((s) => s >= raw);
+  if (step) return step;
+  const days = raw / 86400;
+  const mag = 10 ** Math.floor(Math.log10(days));
+  return ([1, 2, 5, 10].find((m) => m * mag >= days - 1e-9) ?? 10) * mag * 86400;
+}
+
+/** `bins`: exact number of equal-width bins from min to max; null = round-number edges, count chosen from the row count. */
+export function histogram(frame: Frame, rows: Uint32Array, key: string, bins?: number | null): Bin[] {
   const col = frame.columns.get(key);
-  if (!col || col.type !== "number") return [];
+  if (!col || !isFloatColumn(col) || !isContinuousType(col.type)) return [];
   const vals: number[] = [];
   for (const i of rows) if (!Number.isNaN(col.values[i])) vals.push(col.values[i]);
   if (vals.length === 0) return [];
@@ -334,13 +412,14 @@ export function histogram(frame: Frame, rows: Uint32Array, key: string): Bin[] {
     if (v > max) max = v;
   }
   if (min === max) return [{ x0: min, x1: max, count: vals.length }];
+  const fixed = bins && bins > 0 ? Math.floor(bins) : 0;
   const target = Math.min(30, Math.max(5, Math.ceil(Math.log2(vals.length) + 1)));
-  const step = niceStep(max - min, target);
-  const start = Math.floor(min / step) * step;
-  const n = Math.max(1, Math.ceil((max - start) / step + 1e-9));
-  const bins: Bin[] = Array.from({ length: n }, (_, i) => ({ x0: start + i * step, x1: start + (i + 1) * step, count: 0 }));
-  for (const v of vals) bins[Math.min(n - 1, Math.floor((v - start) / step))].count++;
-  return bins;
+  const step = fixed ? (max - min) / fixed : (col.type === "duration" && durationStep(max - min, target)) || niceStep(max - min, target);
+  const start = fixed ? min : Math.floor(min / step) * step;
+  const n = fixed || Math.max(1, Math.ceil((max - start) / step + 1e-9));
+  const out: Bin[] = Array.from({ length: n }, (_, i) => ({ x0: start + i * step, x1: start + (i + 1) * step, count: 0 }));
+  for (const v of vals) out[Math.min(n - 1, Math.floor((v - start) / step))].count++;
+  return out;
 }
 
 /** Distinct values with their row counts, for filter pickers. */
@@ -357,7 +436,7 @@ export function valueCounts(frame: Frame, rows: Uint32Array, key: string): { val
 
 export function extent(frame: Frame, key: string): [number, number] | null {
   const col = frame.columns.get(key);
-  if (!col || (col.type !== "number" && col.type !== "date")) return null;
+  if (!col || !isFloatColumn(col)) return null;
   let min = Infinity;
   let max = -Infinity;
   for (const v of col.values) {
@@ -389,7 +468,7 @@ export function scatterPoints(
 ): { points: ScatterPoint[]; groups: string[]; valid: number } {
   const xc = frame.columns.get(xKey);
   const yc = frame.columns.get(yKey);
-  if (!xc || !yc || xc.type !== "number" || yc.type !== "number") return { points: [], groups: [], valid: 0 };
+  if (!xc || !yc || !isFloatColumn(xc) || !isFloatColumn(yc) || !isContinuousType(xc.type) || !isContinuousType(yc.type)) return { points: [], groups: [], valid: 0 };
   const validRows: number[] = [];
   for (const i of rows) if (!Number.isNaN(xc.values[i]) && !Number.isNaN(yc.values[i])) validRows.push(i);
   let groups: string[] = [];
@@ -514,7 +593,8 @@ export function comparePeriods(frame: Frame, rows: Uint32Array, measure: Measure
     current: values[n - 1],
     previous: n > 1 ? values[n - 2] : NaN,
     spark: values.slice(-12),
-    partial: floorDate(maxDate, "day") < lastDayOfBucket,
+    // Sub-day buckets always contain the latest value, so there is no way to tell whether they are complete.
+    partial: SUB_DAY.includes(ts.bucket) ? false : floorDate(maxDate, "day") < lastDayOfBucket,
   };
 }
 
@@ -532,8 +612,101 @@ export function timeSeriesColumns(
   for (const key of columns.slice(0, MAX_SERIES + 1)) {
     const r = timeSeries(frame, rows, dateKey, bucket, { agg: agg === "count" ? "sum" : agg, column: key }, null);
     if (r.series.length === 0) continue;
-    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [] };
+    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [], ...(r.requestedBucket ? { requestedBucket: r.requestedBucket } : {}), ...(r.timeOfDay ? { timeOfDay: true } : {}) };
     result.series.push({ label: label(key), values: r.series[0].values });
   }
   return result;
+}
+
+// ---------- Donut ----------
+
+export interface DonutSlice {
+  label: string;
+  value: number;
+  isOther: boolean;
+}
+
+/** Largest groups first; the rest is folded into one "その他" slice. Zero, negative and blank values cannot be drawn and are skipped. */
+export function donutSlices(frame: Frame, rows: Uint32Array, key: string, measure: Measure, limit: number): { slices: DonutSlice[]; total: number } {
+  const { bars } = groupBy(frame, rows, key, measure, limit, "value-desc");
+  const slices = bars.filter((b) => b.value > 0).map((b) => ({ label: b.label, value: b.value, isOther: b.isOther }));
+  return { slices, total: slices.reduce((a, s) => a + s.value, 0) };
+}
+
+// ---------- Heatmap ----------
+
+export interface HeatmapResult {
+  xLabels: string[];
+  yLabels: string[];
+  /** cells[y][x]; null = no rows (or no value) there. */
+  cells: (number | null)[][];
+  min: number;
+  max: number;
+}
+
+const MAX_HEAT_LABELS = 30;
+
+/** Label of each row on a heatmap axis, plus the natural order when there is one. */
+function axisLabels(frame: Frame, axis: HeatAxis): { get: (i: number) => string | null; order?: string[] } | null {
+  const col = frame.columns.get(axis.column);
+  if (!col) return null;
+  if (axis.unit) {
+    if (!isFloatColumn(col)) return null;
+    const v = col.values;
+    if (col.type === "time") {
+      if (axis.unit !== "hour") return null;
+      return { get: (i) => datePart(v[i] * 1000, "hour"), order: datePartOrder("hour") };
+    }
+    if (col.type !== "date") return null;
+    return { get: (i) => datePart(v[i], axis.unit!), order: datePartOrder(axis.unit) };
+  }
+  const get = labelGetter(frame, axis.column);
+  return { get, order: frame.meta.get(axis.column)?.order };
+}
+
+/** Two-way grid of a measure. Axes keep only values that occur; unit axes follow calendar order, categories their column order or name. */
+export function heatmapGrid(frame: Frame, rows: Uint32Array, x: HeatAxis, y: HeatAxis, measure: Measure): HeatmapResult {
+  const empty: HeatmapResult = { xLabels: [], yLabels: [], cells: [], min: 0, max: 0 };
+  const xl = axisLabels(frame, x);
+  const yl = axisLabels(frame, y);
+  if (!xl || !yl) return empty;
+  const feed = feeder(frame, measure);
+  const cellAcc = new Map<string, Acc>();
+  const xCount = new Map<string, number>();
+  const yCount = new Map<string, number>();
+  for (const i of rows) {
+    const a = xl.get(i);
+    const b = yl.get(i);
+    if (a === null || b === null) continue;
+    xCount.set(a, (xCount.get(a) ?? 0) + 1);
+    yCount.set(b, (yCount.get(b) ?? 0) + 1);
+    const k = `${a}\u0000${b}`;
+    let acc = cellAcc.get(k);
+    if (!acc) cellAcc.set(k, (acc = newAcc(measure.agg)));
+    feed(acc, i);
+  }
+  const arrange = (counts: Map<string, number>, order?: string[]) => {
+    let keys = [...counts.keys()];
+    // Many distinct values: keep the most frequent ones.
+    if (keys.length > MAX_HEAT_LABELS) keys = keys.sort((p, q) => counts.get(q)! - counts.get(p)!).slice(0, MAX_HEAT_LABELS);
+    const rank = order ? new Map(order.map((v, i) => [v, i])) : null;
+    return keys.sort((p, q) => (rank ? (rank.get(p) ?? 1e9) - (rank.get(q) ?? 1e9) : 0) || collator.compare(p, q));
+  };
+  const xLabels = arrange(xCount, xl.order);
+  const yLabels = arrange(yCount, yl.order);
+  let min = Infinity;
+  let max = -Infinity;
+  const cells = yLabels.map((b) =>
+    xLabels.map((a) => {
+      const acc = cellAcc.get(`${a}\u0000${b}`);
+      if (!acc) return null;
+      const v = finish(acc, measure.agg);
+      if (Number.isNaN(v)) return null;
+      if (v < min) min = v;
+      if (v > max) max = v;
+      return v;
+    }),
+  );
+  if (min === Infinity) return { ...empty, xLabels, yLabels, cells };
+  return { xLabels, yLabels, cells, min, max };
 }

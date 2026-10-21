@@ -5,7 +5,33 @@ export interface RawTable {
   rows: RawCell[][];
 }
 
-export type ColumnType = "number" | "date" | "category" | "text";
+export type ColumnType = "number" | "date" | "time" | "duration" | "boolean" | "category" | "text";
+
+/** Per-column conversion options. Undefined fields (or an undefined `parse`) mean automatic. */
+export interface ColumnParse {
+  /** number: "1.234,5" style (comma = decimal separator, dot/space = grouping). */
+  decimalComma?: boolean;
+  /** number/duration: multiply converted values (e.g. 1000 for values written in 千円). */
+  scale?: number;
+  /** date */
+  dateFormat?: "auto" | "ymd" | "mdy" | "dmy" | "unix-s" | "unix-ms" | "excel" | "pattern";
+  /** date/time with format "pattern". Tokens: YYYY YY MM M DD D hh h mm m ss s; any other char is a literal. */
+  pattern?: string;
+  /** time: "hm" = "9:30" / "0930" / "9時30分" → 09:30:00; "hms" requires seconds; auto accepts both. */
+  timeFormat?: "auto" | "hm" | "hms" | "pattern";
+  /** duration: unit of bare numbers ("90"), default seconds. */
+  durationUnit?: "ms" | "s" | "min" | "h" | "d";
+  /** duration: whether "12:34" means hours:minutes (default) or minutes:seconds. "1:02:03" is always h:m:s. */
+  durationColon?: "hm" | "ms";
+  /** boolean: extra spellings (compared case-insensitively after NFKC + trim). */
+  trueValues?: string[];
+  falseValues?: string[];
+  /** category/text */
+  trim?: boolean;
+  /** NFKC (全角英数→半角) */
+  widthNormalize?: boolean;
+  letterCase?: "none" | "upper" | "lower";
+}
 
 export interface NumberFormat {
   prefix: string;
@@ -14,7 +40,17 @@ export interface NumberFormat {
   decimals: number | null;
 }
 
-export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | "day" | "hour";
+/** Per-widget override of how values are written; undefined fields follow the dashboard / column settings. */
+export interface WidgetNumberFormat {
+  /** "auto" = the dashboard's number style. */
+  style?: "auto" | NumberStyle;
+  /** null / undefined = the column's setting. */
+  decimals?: number | null;
+  prefix?: string;
+  suffix?: string;
+}
+
+export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | "day" | "hour" | "minute";
 
 export type Derivation =
   | { kind: "formula"; /** Column references are stored as [key] */ expr: string }
@@ -61,6 +97,12 @@ export interface ColumnMeta {
   order?: string[];
   /** Date columns holding only a year (e.g. "1750") display and convert as years. */
   dateUnit?: "year";
+  /** How raw cells are converted; undefined = automatic. */
+  parse?: ColumnParse;
+  /** What inference chose for `parse`; "自動判定に戻す" restores it together with the type. */
+  inferredParse?: ColumnParse;
+  /** Short Japanese reason for the inferred type. */
+  inferredReason?: string;
 }
 
 export type Agg = "count" | "sum" | "avg" | "min" | "max" | "distinct";
@@ -80,9 +122,14 @@ interface WidgetBase {
   span: Span;
   /** Palette slot (0-7) for single-series charts; undefined = slot 0 */
   color?: number;
+  /** Show value-axis titles with units on charts; undefined = shown */
+  axisTitles?: boolean;
+  /** Short explanation shown under the title. */
+  subtitle?: string;
+  numberFormat?: WidgetNumberFormat;
 }
 
-export type CompareBucket = "day" | "week" | "month" | "quarter" | "year";
+export type CompareBucket = "hour" | "day" | "week" | "month" | "quarter" | "year";
 
 export interface KpiCompare {
   dateColumn: string;
@@ -96,6 +143,10 @@ export interface KpiWidget extends WidgetBase {
   measure: Measure;
   /** Show the latest period against the previous one. */
   compare?: KpiCompare | null;
+  /** Sparkline next to the comparison; undefined = shown. */
+  showSparkline?: boolean;
+  /** Goal for the value: shows the achievement rate and a progress bar. */
+  target?: number | null;
 }
 
 export type BarSort = "value-desc" | "value-asc" | "label";
@@ -106,9 +157,17 @@ export interface BarWidget extends WidgetBase {
   measure: Measure;
   limit: number;
   sort: BarSort;
+  /** undefined = horizontal */
+  orientation?: "horizontal" | "vertical";
+  /** Value labels at the bar ends; undefined = shown. */
+  showValues?: boolean;
+  /** Share of total in the tooltip; undefined = for sums and counts only. */
+  showShare?: boolean;
+  /** Fold the groups beyond `limit` into "その他"; undefined = on. */
+  otherBucket?: boolean;
 }
 
-export type TimeBucket = "auto" | "day" | "week" | "month" | "quarter" | "year";
+export type TimeBucket = "auto" | "second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year";
 
 export interface TimeWidget extends WidgetBase {
   kind: "time";
@@ -119,11 +178,23 @@ export interface TimeWidget extends WidgetBase {
   /** Several numeric columns side by side (wide data such as one column per prefecture). Overrides split. */
   series?: string[] | null;
   mark: "line" | "column";
+  /** Running total over the buckets (sums and counts). */
+  cumulative?: boolean;
+  /** Trailing moving average over this many points (single series only). */
+  movingAverage?: number | null;
+  /** Dots on every data point of a line. */
+  showPoints?: boolean;
+  /** Lines start the value axis at 0; undefined = true, false fits the data range. */
+  yFromZero?: boolean;
+  /** Label the last value of a single series; undefined = shown. */
+  showValues?: boolean;
 }
 
 export interface HistogramWidget extends WidgetBase {
   kind: "histogram";
   column: string;
+  /** Approximate number of bins; null / undefined = automatic. */
+  bins?: number | null;
 }
 
 export interface ScatterWidget extends WidgetBase {
@@ -131,6 +202,10 @@ export interface ScatterWidget extends WidgetBase {
   x: string;
   y: string;
   colorBy: string | null;
+  /** undefined = "m" */
+  pointSize?: "s" | "m" | "l";
+  /** Least-squares line with the correlation coefficient. */
+  trendLine?: boolean;
 }
 
 export interface PivotWidget extends WidgetBase {
@@ -138,16 +213,84 @@ export interface PivotWidget extends WidgetBase {
   rows: string;
   cols: string;
   measure: Measure;
+  /** Shade cells by value; undefined = on. */
+  heatmap?: boolean;
+  /** Totals row and column; undefined = for additive and min / max / avg measures. */
+  showTotals?: boolean;
+  /** undefined = 20 rows / 10 columns */
+  rowLimit?: number;
+  colLimit?: number;
 }
 
 export interface TableWidget extends WidgetBase {
   kind: "table";
   /** null = every visible column */
   columns: string[] | null;
+  /** Full column order including unchecked columns. Without it, `columns` (then column-settings order) decides. */
+  order?: string[];
   pageSize: number;
+  /** Initial sort; header clicks in the viewer stay local. */
+  sort?: { key: string; dir: 1 | -1 } | null;
+  /** Per-column filter row (default on). */
+  filterRow?: boolean;
+  rowNumbers?: boolean;
+  /** Wrap long cell text instead of truncating. */
+  wrap?: boolean;
 }
 
-export type Widget = KpiWidget | BarWidget | TimeWidget | HistogramWidget | ScatterWidget | PivotWidget | TableWidget;
+export interface DonutWidget extends WidgetBase {
+  kind: "donut";
+  dimension: string;
+  /** Additive only: count or sum. */
+  measure: Measure;
+  /** Slices shown (3-10); the rest is folded into "その他". */
+  limit: number;
+  /** Percent next to each slice; undefined = shown. */
+  showPercent?: boolean;
+}
+
+/** Part of a date or time that a heatmap axis groups by. */
+export type HeatUnit = "weekday" | "hour" | "month" | "day";
+
+/** A heatmap axis: a category / boolean column as is, or a unit of a date / time column. */
+export interface HeatAxis {
+  column: string;
+  unit?: HeatUnit;
+}
+
+export interface HeatmapWidget extends WidgetBase {
+  kind: "heatmap";
+  x: HeatAxis;
+  y: HeatAxis;
+  measure: Measure;
+}
+
+export interface NoteWidget extends WidgetBase {
+  kind: "note";
+  /** Minimal markdown: "# " / "## " headings, "- " bullets, **bold**. */
+  text: string;
+}
+
+export interface GaugeWidget extends WidgetBase {
+  kind: "gauge";
+  measure: Measure;
+  target: number;
+  /** Value at the left end of the gauge; undefined = 0. */
+  min?: number;
+}
+
+export type Widget =
+  | KpiWidget
+  | BarWidget
+  | TimeWidget
+  | HistogramWidget
+  | ScatterWidget
+  | PivotWidget
+  | TableWidget
+  | DonutWidget
+  | HeatmapWidget
+  | NoteWidget
+  | GaugeWidget;
 export type WidgetKind = Widget["kind"];
 
 export type Filter =
@@ -162,7 +305,7 @@ export type Filter =
       preset?: DatePreset | null;
     };
 
-export type DatePreset = "last-month" | "last-30" | "last-90" | "latest-year";
+export type DatePreset = "last-24h" | "last-month" | "last-30" | "last-90" | "latest-year";
 
 export interface DataSource {
   fileName: string;
@@ -188,6 +331,7 @@ export interface Dashboard {
 }
 
 export type SurfaceTheme = "warm" | "white" | "dark";
+export type NumberStyle = "en" | "ja" | "full";
 export type PaletteName = "calm" | "vivid" | "custom";
 
 export interface Theme {
@@ -201,6 +345,8 @@ export interface Theme {
   fontSize: "standard" | "large";
   /** Add line patterns / dash styles to multi-series charts. Always on when printing. */
   texture?: boolean;
+  /** How large numbers are abbreviated on charts. Missing = "en". */
+  numberStyle?: NumberStyle;
 }
 
 export interface DashboardSummary {
@@ -211,10 +357,12 @@ export interface DashboardSummary {
   fileName: string;
 }
 
-/** Column values after coercion. Numbers and dates use NaN for blanks; dates are UTC epoch ms. */
+/**
+ * Column values after coercion. Float types use NaN for blanks; dates are UTC epoch ms,
+ * time is seconds since 00:00, duration is seconds, boolean is 1 / 0.
+ */
 export type ColumnValues =
-  | { type: "number"; values: Float64Array }
-  | { type: "date"; values: Float64Array }
+  | { type: "number" | "date" | "time" | "duration" | "boolean"; values: Float64Array }
   | { type: "category" | "text"; values: (string | null)[] };
 
 export interface Frame {

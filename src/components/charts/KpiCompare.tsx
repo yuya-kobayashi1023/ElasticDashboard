@@ -3,16 +3,18 @@ import type { PeriodComparison, ResolvedBucket } from "../../core/aggregate";
 import { formatDate } from "../../core/format";
 import { linear } from "./util";
 
-const PREV_LABEL: Record<ResolvedBucket, string> = { day: "前日比", week: "前週比", month: "前月比", quarter: "前四半期比", year: "前年比" };
+const PREV_LABEL: Record<ResolvedBucket, string> = { second: "前秒比", minute: "前分比", hour: "前時間比", day: "前日比", week: "前週比", month: "前月比", quarter: "前四半期比", year: "前年比" };
 
 interface Props {
   data: PeriodComparison;
   format: (v: number) => string;
   upIsGood: boolean;
   color: string;
+  /** undefined = shown */
+  showSparkline?: boolean;
 }
 
-export function KpiCompare({ data, format, upIsGood, color }: Props) {
+export function KpiCompare({ data, format, upIsGood, color, showSparkline = true }: Props) {
   const { current, previous, spark } = data;
   const diff = current - previous;
   const comparable = !Number.isNaN(current) && !Number.isNaN(previous);
@@ -44,7 +46,7 @@ export function KpiCompare({ data, format, upIsGood, color }: Props) {
           {deltaText}
         </span>
         {comparable && <span className="muted">{PREV_LABEL[data.bucket]}</span>}
-        {spark.length > 1 && (
+        {showSparkline && spark.length > 1 && (
           <svg className="sparkline" width={W} height={H} aria-hidden>
             <path d={d} fill="none" stroke="var(--other)" strokeWidth={1.5} strokeLinejoin="round" />
             {!Number.isNaN(current) && <circle cx={sx(spark.length - 1)} cy={sy(current)} r={3} fill={color} />}

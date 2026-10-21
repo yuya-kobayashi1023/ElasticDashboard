@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Bin } from "../../core/aggregate";
-import { clampTooltip, linear, niceTicks, textWidth, useChartHeight, useWidth, vBarPath } from "./util";
+import { clampTooltip, linear, niceTicks, textWidth, truncate, useChartHeight, useWidth, vBarPath } from "./util";
 import { useChartFont } from "../ThemeScope";
 
 interface Props {
@@ -8,12 +8,15 @@ interface Props {
   formatX: (v: number) => string;
   height?: number;
   color?: string;
+  /** Title of the value (x) axis; the y axis is always the count. */
+  xTitle?: string;
 }
 
 const M = { top: 10, right: 8, bottom: 28 };
+const TITLE_H = 16;
 const count = new Intl.NumberFormat("ja-JP");
 
-export function Histogram({ bins, formatX, height: fixedHeight, color = "var(--series-1)" }: Props) {
+export function Histogram({ bins, formatX, height: fixedHeight, color = "var(--series-1)", xTitle }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const autoHeight = useChartHeight(0.26, 180, 360);
@@ -22,8 +25,10 @@ export function Histogram({ bins, formatX, height: fixedHeight, color = "var(--s
   const ticks = niceTicks(0, Math.max(...bins.map((b) => b.count)), 4);
   const left = Math.max(...ticks.map((t) => textWidth(count.format(t), fs))) + 12;
   const innerW = Math.max(10, width - left - M.right);
-  const plotH = height - M.top - M.bottom;
-  const y = linear(0, ticks[ticks.length - 1], M.top + plotH, M.top);
+  const top = M.top + (xTitle ? TITLE_H : 0);
+  const bottom = M.bottom + (xTitle ? TITLE_H : 0);
+  const plotH = height - top - bottom;
+  const y = linear(0, ticks[ticks.length - 1], top + plotH, top);
   const band = innerW / bins.length;
   const labelEvery = Math.max(1, Math.ceil(bins.length / Math.max(2, Math.floor(innerW / 72))));
 
@@ -31,6 +36,16 @@ export function Histogram({ bins, formatX, height: fixedHeight, color = "var(--s
     <div className="chart" ref={ref} onMouseLeave={() => setHover(null)}>
       {width > 0 && (
         <svg width={width} height={height} role="img" aria-label={`ヒストグラム。${bins.length} 区間。`}>
+          {xTitle && (
+            <>
+              <text className="axis-title-text" x={left - 8} y={M.top + 4}>
+                件数
+              </text>
+              <text className="axis-title-text" x={left + innerW} y={height - 4} textAnchor="end">
+                {truncate(xTitle, innerW, fs)}
+              </text>
+            </>
+          )}
           {ticks.map((t) => (
             <g key={t}>
               <line className={t === 0 ? "base-line" : "grid-line"} x1={left} x2={left + innerW} y1={y(t)} y2={y(t)} />
@@ -41,14 +56,14 @@ export function Histogram({ bins, formatX, height: fixedHeight, color = "var(--s
           ))}
           {bins.map((b, i) => (
             <g key={i} onMouseEnter={() => setHover(i)}>
-              <rect x={left + i * band} y={M.top} width={band} height={plotH} fill="transparent" />
+              <rect x={left + i * band} y={top} width={band} height={plotH} fill="transparent" />
               {/* 2px surface gap between touching columns */}
               <path d={vBarPath(left + i * band + 1, Math.max(1, band - 2), y(0), y(b.count))} fill={color} opacity={hover === null || hover === i ? 1 : 0.55} />
             </g>
           ))}
           {bins.map((b, i) =>
             i % labelEvery === 0 ? (
-              <text key={`t${i}`} className="tick-num" x={left + i * band} y={height - 8} textAnchor={i === 0 ? "start" : "middle"}>
+              <text key={`t${i}`} className="tick-num" x={left + i * band} y={height - bottom + 20} textAnchor={i === 0 ? "start" : "middle"}>
                 {formatX(b.x0)}
               </text>
             ) : null,
@@ -56,7 +71,7 @@ export function Histogram({ bins, formatX, height: fixedHeight, color = "var(--s
         </svg>
       )}
       {hover !== null && bins[hover] && (
-        <div className="chart-tooltip" style={{ left: clampTooltip(left + (hover + 0.5) * band, width), top: M.top }}>
+        <div className="chart-tooltip" style={{ left: clampTooltip(left + (hover + 0.5) * band, width), top }}>
           <div className="tt-title">
             {formatX(bins[hover].x0)} 〜 {formatX(bins[hover].x1)}
           </div>

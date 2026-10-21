@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "samples": "bun scripts/generate-samples.ts"
+    "samples": "bun scripts/generate-samples.ts",
+    "codemap": "bun scripts/codemap.ts",
+    "smoke": "bun scripts/smoke.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -30,6 +32,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "iconv-lite": "^0.7.3",
+    "playwright-core": "^1.64.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.5"

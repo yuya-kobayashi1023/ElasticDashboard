@@ -14,6 +14,7 @@ export function toggleFilterValue(filters: Filter[], column: string, value: stri
 const DAY = 86400000;
 
 export const DATE_PRESETS: { id: DatePreset; label: string }[] = [
+  { id: "last-24h", label: "直近24時間" },
   { id: "last-month", label: "最終月" },
   { id: "last-30", label: "直近30日" },
   { id: "last-90", label: "直近90日" },
@@ -27,6 +28,8 @@ export function presetRange(preset: DatePreset, latest: number): [number, number
   const lastDay = Date.UTC(y, d.getUTCMonth(), d.getUTCDate());
   const end = lastDay + DAY - 1;
   switch (preset) {
+    case "last-24h":
+      return [latest - DAY, latest];
     case "last-month":
       return [Date.UTC(y, d.getUTCMonth(), 1), end];
     case "last-30":

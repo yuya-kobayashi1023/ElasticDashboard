@@ -1,5 +1,8 @@
+import { aggregate, columnHasTime, measureIsValid } from "./aggregate";
 import { buildFrame } from "./frame";
-import { cellToString, inferColumns, parseDateValue, parseNumber, prefersAverage } from "./infer";
+import { isContinuousType, isDimensionType, isFloatType } from "./columnTypes";
+import { cellToString, inferColumns, prefersAverage } from "./infer";
+import { converterFor } from "./parsers";
 import { newId } from "./id";
 import type { ColumnMeta, ColumnType, Dashboard, DataSource, Filter, Frame, Measure, RawTable, Widget, WidgetKind } from "./types";
 
@@ -23,13 +26,17 @@ export interface ColumnRoles {
   measures: ColumnMeta[];
   dimensions: ColumnMeta[];
   dates: ColumnMeta[];
+  booleans: ColumnMeta[];
 }
+
+/** Lengths of time are measurements: averaged by default, like ratios and prices. */
+const averaged = (c: ColumnMeta) => c.type === "duration" || prefersAverage(c);
 
 export function columnRoles(columns: ColumnMeta[], frame: Frame): ColumnRoles {
   const usable = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
   // A column with a single value (an export timestamp, a fixed flag) carries no information.
   const measures = usable
-    .filter((c) => c.type === "number" && !c.idLike && distinctCount(frame, c.key) >= 2)
+    .filter((c) => (c.type === "number" || c.type === "duration") && !c.idLike && distinctCount(frame, c.key) >= 2)
     .sort((a, b) => measureRank(b) - measureRank(a));
   const dimensions = usable
     .filter((c) => c.type === "category")
@@ -45,8 +52,10 @@ export function columnRoles(columns: ColumnMeta[], frame: Frame): ColumnRoles {
         Number(a.digits) - Number(b.digits),
     )
     .map(({ c }) => c);
+  // Yes/no columns group like categories and read well as a share (avg of 1/0).
+  const booleans = usable.filter((c) => c.type === "boolean" && distinctCount(frame, c.key) >= 2);
   const dates = usable.filter((c) => c.type === "date" && distinctCount(frame, c.key) >= 2);
-  return { measures, dimensions, dates };
+  return { measures, dimensions: [...dimensions, ...booleans], dates, booleans };
 }
 
 /** Category columns whose values are all numbers (split dates, codes). */
@@ -65,17 +74,18 @@ function numericLooking(frame: Frame, key: string): boolean {
 
 function measureFor(col: ColumnMeta | undefined): Measure {
   if (!col) return { agg: "count", column: null };
-  return { agg: prefersAverage(col) ? "avg" : "sum", column: col.key };
+  return { agg: averaged(col) ? "avg" : "sum", column: col.key };
 }
 
 export function autoWidgets(columns: ColumnMeta[], frame: Frame): Widget[] {
-  const { measures, dimensions, dates } = columnRoles(columns, frame);
+  const { measures, dimensions, dates, booleans } = columnRoles(columns, frame);
   const widgets: Widget[] = [];
   widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: { agg: "count", column: null } });
   for (const m of measures.slice(0, 3)) widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: measureFor(m) });
   // Fill the 4-column KPI row so it reads as one band.
   const kpiExtras: Measure[] = [];
   if (measures[0] && measureFor(measures[0]).agg === "sum") kpiExtras.push({ agg: "avg", column: measures[0].key });
+  if (booleans[0]) kpiExtras.push({ agg: "avg", column: booleans[0].key });
   if (dimensions[0]) kpiExtras.push({ agg: "distinct", column: dimensions[0].key });
   while (widgets.length < 4 && kpiExtras.length) widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: kpiExtras.shift()! });
   if (widgets.length === 1 || widgets.length === 2) for (const w of widgets) w.span = widgets.length === 1 ? 4 : 2;
@@ -83,8 +93,8 @@ export function autoWidgets(columns: ColumnMeta[], frame: Frame): Widget[] {
   // Charts lead with an amount or quantity, else the first column worth totalling (daily case counts…).
   // Without one, counting rows reads more naturally than averaging measurements.
   // When most numbers are measurements (temperatures, lengths), an unlabeled one likely is too.
-  const mostlyMeasurements = measures.filter(prefersAverage).length >= measures.length / 2;
-  const lead = measures.find((m) => measureRank(m) > 0) ?? (mostlyMeasurements ? undefined : measures.find((m) => !prefersAverage(m)));
+  const mostlyMeasurements = measures.filter(averaged).length >= measures.length / 2;
+  const lead = measures.find((m) => measureRank(m) > 0) ?? (mostlyMeasurements ? undefined : measures.find((m) => !averaged(m)));
   const primary = lead ? measureFor(lead) : ({ agg: "count", column: null } as Measure);
   if (dates[0]) {
     widgets.push({
@@ -123,11 +133,33 @@ export function autoFilters(columns: ColumnMeta[], frame: Frame): Filter[] {
   return filters;
 }
 
+/** Count and sum add up across slices; anything else becomes a row count. */
+function additiveMeasure(m: Measure): Measure {
+  return m.agg === "sum" || m.agg === "count" ? m : { agg: "count", column: null };
+}
+
+/** Smallest 1, 2, 2.5 or 5 × 10^n that is at least `v`; 100 when `v` is not a positive number. */
+export function niceCeil(v: number): number {
+  if (!Number.isFinite(v) || v <= 0) return 100;
+  const mag = 10 ** Math.floor(Math.log10(v));
+  const m = [1, 2, 2.5, 5, 10].find((c) => c * mag >= v * (1 - 1e-12)) ?? 10;
+  // Rounded to absorb floating point noise such as 2.5 * 0.1.
+  return Number((m * mag).toPrecision(12));
+}
+
+/** Default gauge target: the measure's current value over all rows, rounded up to a nice number. */
+export function gaugeTargetFor(frame: Frame, measure: Measure): number {
+  if (!measureIsValid(frame, measure)) return 100;
+  const rows = new Uint32Array(frame.rowCount);
+  for (let i = 0; i < rows.length; i++) rows[i] = i;
+  return niceCeil(aggregate(frame, rows, measure));
+}
+
 export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Frame, id = newId()): Widget {
   const { measures, dimensions, dates } = columnRoles(columns, frame);
   const visible = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
   const primary = measureFor(measures[0]);
-  const anyDim = dimensions[0] ?? visible.find((c) => c.type === "category" || c.type === "text");
+  const anyDim = dimensions[0] ?? visible.find((c) => isDimensionType(c.type));
   switch (kind) {
     case "kpi":
       return { id, kind, title: "", span: 1, measure: primary };
@@ -136,7 +168,7 @@ export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Fr
     case "time":
       return { id, kind, title: "", span: 4, dateColumn: dates[0]?.key ?? "", bucket: "auto", measure: primary, split: null, mark: "line" };
     case "histogram":
-      return { id, kind, title: "", span: 2, column: measures[0]?.key ?? visible.find((c) => c.type === "number")?.key ?? "" };
+      return { id, kind, title: "", span: 2, column: measures[0]?.key ?? visible.find((c) => isContinuousType(c.type))?.key ?? "" };
     case "scatter": {
       const nums = measures.length >= 2 ? measures : visible.filter((c) => c.type === "number");
       return { id, kind, title: "", span: 2, x: nums[0]?.key ?? "", y: nums[1]?.key ?? nums[0]?.key ?? "", colorBy: null };
@@ -153,6 +185,20 @@ export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Fr
       };
     case "table":
       return { id, kind, title: "", span: 4, columns: null, pageSize: 20 };
+    case "donut":
+      return { id, kind, title: "", span: 2, dimension: anyDim?.key ?? visible[0]?.key ?? "", measure: additiveMeasure(primary), limit: 6 };
+    case "heatmap": {
+      // Typical case: weekday × hour of a timestamp; otherwise a date's months against a category, or two categories.
+      const stamp = dates.find((c) => columnHasTime(frame, c.key));
+      if (stamp) return { id, kind, title: "", span: 4, x: { column: stamp.key, unit: "hour" }, y: { column: stamp.key, unit: "weekday" }, measure: primary };
+      const dim = anyDim?.key ?? "";
+      if (dates[0]) return { id, kind, title: "", span: 4, x: { column: dates[0].key, unit: "month" }, y: dim ? { column: dim } : { column: dates[0].key, unit: "weekday" }, measure: primary };
+      return { id, kind, title: "", span: 4, x: { column: dimensions[0]?.key ?? dim }, y: { column: dimensions[1]?.key ?? dimensions[0]?.key ?? dim }, measure: primary };
+    }
+    case "note":
+      return { id, kind, title: "", span: 4, text: "# 見出し\n\n- ここにメモを書きます" };
+    case "gauge":
+      return { id, kind, title: "", span: 1, measure: primary, target: gaugeTargetFor(frame, primary) };
   }
 }
 
@@ -187,9 +233,9 @@ export interface ReplaceReport {
 }
 
 /** Whether ≥95% of the column's non-blank values convert to `type` (sampled for large data). */
-function fitsType(type: ColumnType, raw: RawTable, index: number): boolean {
-  if (type === "category" || type === "text") return true;
-  const fn = type === "number" ? parseNumber : parseDateValue;
+function fitsType(meta: ColumnMeta, raw: RawTable, index: number): boolean {
+  if (!isFloatType(meta.type)) return true;
+  const fn = converterFor(meta);
   const step = Math.max(1, Math.floor(raw.rows.length / 3000));
   let seen = 0;
   let ok = 0;
@@ -224,10 +270,20 @@ export function mergeColumns(
     if (!prev) return infer(h, i);
     // A type the user chose is always kept.
     if (prev.type !== prev.inferredType) return prev;
-    if (fitsType(prev.type, raw, i)) return prev;
+    if (fitsType(prev, raw, i)) return prev;
     const next = infer(h, i);
     if (next.type !== prev.type) retyped.push({ label: prev.label, from: prev.type, to: next.type });
-    return { ...prev, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format, dateUnit: next.dateUnit };
+    // Conversion options belonged to the old type; take the ones inferred for the new data.
+    const { parse: _parse, inferredParse: _inferredParse, ...rest } = prev;
+    return {
+      ...rest,
+      type: next.type,
+      inferredType: next.type,
+      format: prev.type === "number" ? prev.format : next.format,
+      dateUnit: next.dateUnit,
+      ...(next.parse ? { parse: next.parse, inferredParse: next.inferredParse } : {}),
+      inferredReason: next.inferredReason,
+    };
   });
   const present = new Set(raw.headers);
   const derived = existing.filter((c) => c.derived);

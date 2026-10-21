@@ -199,6 +199,16 @@ export function DesignPanel({ open, onClose }: { open: boolean; onClose: () => v
           ]}
           onChange={(fontSize) => set({ fontSize })}
         />
+        <Segmented
+          label="大きな数値の表記"
+          value={theme.numberStyle ?? "en"}
+          options={[
+            ["en", "1.2k・3.4M"],
+            ["ja", "1.2万・3.4億"],
+            ["full", "省略しない"],
+          ]}
+          onChange={(numberStyle) => set({ numberStyle })}
+        />
         <div className="field">
           <span className="field-label">見分けやすさ</span>
           <label className="checkbox">
