@@ -1,4 +1,4 @@
-import { columnHasTime } from "./aggregate";
+import { aggregate, columnHasTime, measureIsValid } from "./aggregate";
 import { buildFrame } from "./frame";
 import { isContinuousType, isDimensionType, isFloatType } from "./columnTypes";
 import { cellToString, inferColumns, prefersAverage } from "./infer";
@@ -138,6 +138,23 @@ function additiveMeasure(m: Measure): Measure {
   return m.agg === "sum" || m.agg === "count" ? m : { agg: "count", column: null };
 }
 
+/** Smallest 1, 2, 2.5 or 5 × 10^n that is at least `v`; 100 when `v` is not a positive number. */
+export function niceCeil(v: number): number {
+  if (!Number.isFinite(v) || v <= 0) return 100;
+  const mag = 10 ** Math.floor(Math.log10(v));
+  const m = [1, 2, 2.5, 5, 10].find((c) => c * mag >= v * (1 - 1e-12)) ?? 10;
+  // Rounded to absorb floating point noise such as 2.5 * 0.1.
+  return Number((m * mag).toPrecision(12));
+}
+
+/** Default gauge target: the measure's current value over all rows, rounded up to a nice number. */
+export function gaugeTargetFor(frame: Frame, measure: Measure): number {
+  if (!measureIsValid(frame, measure)) return 100;
+  const rows = new Uint32Array(frame.rowCount);
+  for (let i = 0; i < rows.length; i++) rows[i] = i;
+  return niceCeil(aggregate(frame, rows, measure));
+}
+
 export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Frame, id = newId()): Widget {
   const { measures, dimensions, dates } = columnRoles(columns, frame);
   const visible = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
@@ -181,7 +198,7 @@ export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Fr
     case "note":
       return { id, kind, title: "", span: 4, text: "# 見出し\n\n- ここにメモを書きます" };
     case "gauge":
-      return { id, kind, title: "", span: 1, measure: primary, target: 100 };
+      return { id, kind, title: "", span: 1, measure: primary, target: gaugeTargetFor(frame, primary) };
   }
 }
 

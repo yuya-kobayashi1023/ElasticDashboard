@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { niceStep } from "../../core/aggregate";
+import { durationStep, niceStep } from "../../core/aggregate";
 
 export const SERIES_COLORS = Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`);
 /** De-emphasis gray for the "Other" bucket. */
@@ -49,12 +49,13 @@ export function truncate(s: string, maxWidth: number, size = 12): string {
   return out + "…";
 }
 
-export function niceTicks(min: number, max: number, target = 5): number[] {
+/** `duration`: the values are seconds, so steps come from round time units (see `durationStep`). */
+export function niceTicks(min: number, max: number, target = 5, duration = false): number[] {
   if (min === max) {
     if (min === 0) return [0, 1];
     [min, max] = min > 0 ? [0, max] : [min, 0];
   }
-  const step = niceStep(max - min, target);
+  const step = (duration && durationStep(max - min, target)) || niceStep(max - min, target);
   const start = Math.floor(min / step) * step;
   const end = Math.ceil(max / step - 1e-9) * step;
   const ticks: number[] = [];

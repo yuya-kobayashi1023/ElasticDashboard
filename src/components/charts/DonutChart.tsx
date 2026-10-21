@@ -8,6 +8,8 @@ interface Props {
   slices: DonutSlice[];
   total: number;
   format: (v: number) => string;
+  /** Center total; defaults to `format` (tooltips keep `format`). */
+  formatLabel?: (v: number) => string;
   /** Percent next to each legend entry; the tooltip always shows it. */
   showPercent: boolean;
   selected: string[];
@@ -33,7 +35,7 @@ function sector(cx: number, cy: number, ro: number, ri: number, a0: number, a1: 
   return `M${pt(ro, a0)}A${ro},${ro} 0 ${large} 1 ${pt(ro, a1)}L${pt(ri, a1)}A${ri},${ri} 0 ${large} 0 ${pt(ri, a0)}Z`;
 }
 
-export function DonutChart({ slices, total, format, showPercent, selected, onToggle, totalLabel = "合計" }: Props) {
+export function DonutChart({ slices, total, format, formatLabel, showPercent, selected, onToggle, totalLabel = "合計" }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const [hover, setHover] = useState<number | null>(null);
@@ -55,7 +57,7 @@ export function DonutChart({ slices, total, format, showPercent, selected, onTog
   const interactive = (s: DonutSlice) => !!onToggle && !s.isOther;
   const toggle = (s: DonutSlice) => interactive(s) && onToggle!(s.label);
 
-  const totalText = format(total);
+  const totalText = (formatLabel ?? format)(total);
   const totalSize = Math.max(11, Math.min(26, (ri * 1.7) / Math.max(1, totalText.length * 0.6)));
   const legendW = side ? width - size - 24 : width;
 

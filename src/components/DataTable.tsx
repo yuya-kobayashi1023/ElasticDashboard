@@ -16,12 +16,14 @@ interface Props {
   filterRow?: boolean;
   rowNumbers?: boolean;
   wrap?: boolean;
+  /** The widget itself has no column selected (as opposed to every column being hidden in the column settings). */
+  noneSelected?: boolean;
 }
 
 const collator = new Intl.Collator("ja", { numeric: true });
 const count = new Intl.NumberFormat("ja-JP");
 
-export function DataTable({ frame, rows, columns, pageSize, initialSort = null, filterRow = true, rowNumbers = false, wrap = false }: Props) {
+export function DataTable({ frame, rows, columns, pageSize, initialSort = null, filterRow = true, rowNumbers = false, wrap = false, noneSelected = false }: Props) {
   const [sort, setSort] = useState<Sort>(initialSort);
   const [page, setPage] = useState(0);
   // Committed (debounced) filter text per column key, and a counter that remounts the inputs when cleared.
@@ -103,7 +105,9 @@ export function DataTable({ frame, rows, columns, pageSize, initialSort = null, 
     setClearGen((g) => g + 1);
   };
 
-  if (columns.length === 0) return <div className="widget-state">表示する列がありません。列の設定で表示を切り替えてください。</div>;
+  if (columns.length === 0) {
+    return <div className="widget-state">{noneSelected ? "表示する列が選ばれていません。ウィジェットの設定で列を選んでください。" : "表示する列がありません。列の設定で表示を切り替えてください。"}</div>;
+  }
 
   return (
     <>

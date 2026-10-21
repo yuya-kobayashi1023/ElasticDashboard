@@ -232,6 +232,24 @@ export function formatTick(t: number, bucket: ResolvedBucket, timeOnly = false):
   }
 }
 
+/**
+ * Labels for a row of axis ticks. Sub-day ticks carry the date ("3/2 8:00") on the first tick and whenever the day
+ * changes from the previous tick, as long as the ticks span more than one day; other ticks are plain `formatTick`.
+ */
+export function tickLabels(ts: number[], bucket: ResolvedBucket, timeOnly = false): string[] {
+  const subDay = bucket === "hour" || bucket === "minute" || bucket === "second";
+  if (!subDay || timeOnly) return ts.map((t) => formatTick(t, bucket, timeOnly));
+  const day = (t: number) => Math.floor(t / 86400000);
+  const multiDay = ts.length > 0 && day(ts[0]) !== day(ts[ts.length - 1]);
+  return ts.map((t, i) => {
+    const plain = formatTick(t, bucket);
+    if (!multiDay || (i > 0 && day(ts[i - 1]) === day(t))) return plain;
+    if (plain.includes("/")) return plain;
+    const d = new Date(t);
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${plain.replace(/^0/, "")}`;
+  });
+}
+
 export function columnLabel(meta: Map<string, ColumnMeta> | ColumnMeta[], key: string | null): string {
   if (!key) return "";
   const m = Array.isArray(meta) ? meta.find((c) => c.key === key) : meta.get(key);

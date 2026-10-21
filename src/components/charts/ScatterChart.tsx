@@ -12,6 +12,9 @@ interface Props {
   formatY: (v: number) => string;
   xLabel: string;
   yLabel: string;
+  /** Axes are in seconds: ticks fall on round time steps. */
+  xDuration?: boolean;
+  yDuration?: boolean;
   color: string;
   /** undefined = "m" */
   pointSize?: "s" | "m" | "l";
@@ -23,7 +26,7 @@ const RADIUS = { s: 3, m: 4, l: 6 };
 
 const M = { top: 22, right: 12, bottom: 40 };
 
-export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel, color, pointSize = "m", trendLine }: Props) {
+export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel, xDuration, yDuration, color, pointSize = "m", trendLine }: Props) {
   const clipId = useId();
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
@@ -39,8 +42,8 @@ export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel,
     if (p.y > y1) y1 = p.y;
   }
   // Axes follow the data range: a scatter plot compares positions, not lengths from zero.
-  const xt = niceTicks(x0, x1, 5);
-  const yt = niceTicks(y0, y1, 5);
+  const xt = niceTicks(x0, x1, 5, xDuration);
+  const yt = niceTicks(y0, y1, 5, yDuration);
   const left = Math.max(...yt.map((t) => textWidth(formatY(t), fs))) + 12;
   const innerW = Math.max(10, width - left - M.right);
   const plotH = height - M.top - M.bottom;

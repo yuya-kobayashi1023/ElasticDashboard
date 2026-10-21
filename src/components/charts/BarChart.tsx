@@ -19,6 +19,8 @@ interface Props {
   showValues?: boolean;
   /** Denominator for the share; defaults to the sum of the shown bars (differs when the rest is not shown). */
   shareTotal?: number;
+  /** Labels drawn on the bars; defaults to `format` (tooltips keep `format`). */
+  formatLabel?: (v: number) => string;
   /** Tick labels of the vertical value axis; defaults to `format`. */
   formatAxis?: (v: number) => string;
 }
@@ -64,7 +66,7 @@ function BarTooltip({ bar, format, share, selected, interactive, style }: { bar:
   );
 }
 
-function HBarChart({ bars, format, showShare, shareTotal, selected, onToggle, color = "var(--series-1)", valueTitle, showValues = true }: Props) {
+function HBarChart({ bars, format, formatLabel, showShare, shareTotal, selected, onToggle, color = "var(--series-1)", valueTitle, showValues = true }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const [hover, setHover] = useState<number | null>(null);
@@ -73,7 +75,7 @@ function HBarChart({ bars, format, showShare, shareTotal, selected, onToggle, co
   const min = Math.min(0, ...valid.map((b) => b.value));
   const max = Math.max(0, ...valid.map((b) => b.value));
   const labelW = Math.min(Math.max(...bars.map((b) => textWidth(b.label, fs)), 40) + 8, width * 0.36);
-  const valueW = showValues ? Math.max(...bars.map((b) => textWidth(format(b.value), fs))) + 10 : 10;
+  const valueW = showValues ? Math.max(...bars.map((b) => textWidth((formatLabel ?? format)(b.value), fs))) + 10 : 10;
   const plotL = labelW + 4;
   const plotR = Math.max(plotL + 20, width - valueW);
   const x = linear(min, max === min ? 1 : max, plotL, plotR);
@@ -91,7 +93,7 @@ function HBarChart({ bars, format, showShare, shareTotal, selected, onToggle, co
             const v = Number.isNaN(b.value) ? 0 : b.value;
             const dim = sel.size > 0 && !sel.has(b.label);
             const interactive = onToggle && !b.isOther;
-            const valueText = format(b.value);
+            const valueText = (formatLabel ?? format)(b.value);
             return (
               <g
                 key={b.label}
@@ -99,7 +101,7 @@ function HBarChart({ bars, format, showShare, shareTotal, selected, onToggle, co
                 role={interactive ? "button" : undefined}
                 tabIndex={interactive ? 0 : undefined}
                 aria-pressed={interactive ? sel.has(b.label) : undefined}
-                aria-label={`${b.label}: ${valueText}`}
+                aria-label={`${b.label}: ${format(b.value)}`}
                 onMouseEnter={() => setHover(i)}
                 onFocus={() => setHover(i)}
                 onBlur={() => setHover(null)}
@@ -143,7 +145,7 @@ function HBarChart({ bars, format, showShare, shareTotal, selected, onToggle, co
 const TICK_LABEL_W = 84;
 
 /** Vertical bars: labels run along the bottom and are tilted and truncated when they do not fit. */
-function ColumnChart({ bars, format, formatAxis, showShare, shareTotal, selected, onToggle, color = "var(--series-1)", valueTitle, showValues = true }: Props) {
+function ColumnChart({ bars, format, formatLabel, formatAxis, showShare, shareTotal, selected, onToggle, color = "var(--series-1)", valueTitle, showValues = true }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const auto = useChartHeight(0.3, 200, 340);
@@ -158,7 +160,7 @@ function ColumnChart({ bars, format, formatAxis, showShare, shareTotal, selected
   const band = innerW / Math.max(1, bars.length);
   const tilt = Math.max(...bars.map((b) => textWidth(b.label, fs))) + 4 > band;
   const labelH = tilt ? Math.round(TICK_LABEL_W * 0.6) + 14 : 24;
-  const valueTexts = bars.map((b) => format(b.value));
+  const valueTexts = bars.map((b) => (formatLabel ?? format)(b.value));
   const labelsFit = showValues && Math.max(...valueTexts.map((t) => textWidth(t, fs))) + 4 <= band;
   const top = labelsFit ? 22 : 10;
   const plotH = Math.max(40, height - top - labelH);
@@ -192,7 +194,7 @@ function ColumnChart({ bars, format, formatAxis, showShare, shareTotal, selected
                 role={interactive ? "button" : undefined}
                 tabIndex={interactive ? 0 : undefined}
                 aria-pressed={interactive ? sel.has(b.label) : undefined}
-                aria-label={`${b.label}: ${valueTexts[i]}`}
+                aria-label={`${b.label}: ${format(b.value)}`}
                 onMouseEnter={() => setHover(i)}
                 onFocus={() => setHover(i)}
                 onBlur={() => setHover(null)}

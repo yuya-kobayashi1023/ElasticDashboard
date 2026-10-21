@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { gaugeTargetFor } from "../../core/autoDashboard";
 import type { GaugeWidget } from "../../core/types";
 import { CommonDisplay } from "./display";
 import { MeasureFields, NumberInput, type FieldProps } from "./shared";
@@ -34,12 +35,20 @@ function TargetInput({ value, onChange }: { value: number; onChange: (v: number)
   );
 }
 
-export function GaugeData({ widget, columns, set }: FieldProps<GaugeWidget>) {
+export function GaugeData({ widget, columns, frame, set }: FieldProps<GaugeWidget>) {
   return (
     <>
-      <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
+      <MeasureFields
+        measure={widget.measure}
+        columns={columns}
+        onChange={(measure) => {
+          // A target still equal to the suggestion for the old measure was never edited, so it follows the new measure.
+          const untouched = widget.target === gaugeTargetFor(frame, widget.measure);
+          set({ measure, ...(untouched ? { target: gaugeTargetFor(frame, measure) } : {}) });
+        }}
+      />
       <div className="field-row">
-        <TargetInput value={widget.target} onChange={(target) => set({ target }, `target:${widget.id}`)} />
+        <TargetInput key={JSON.stringify(widget.measure)} value={widget.target} onChange={(target) => set({ target }, `target:${widget.id}`)} />
         <NumberInput label="最小値" value={widget.min} placeholder="0" onChange={(min) => set({ min: min ?? undefined }, `min:${widget.id}`)} />
       </div>
       <span className="field-hint">最小値から目標値までを半円で表します。空欄の最小値は 0 として扱います</span>

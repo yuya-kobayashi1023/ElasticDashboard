@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { TimeSeriesResult } from "../../core/aggregate";
-import { formatDate, formatTick } from "../../core/format";
+import { BUCKET_LABEL, formatDate, formatTick, tickLabels } from "../../core/format";
 import { OTHER_COLOR, SERIES_COLORS, clampTooltip, linear, niceTicks, textWidth, truncate, useChartHeight, useWidth, vBarPath } from "./util";
 import { SeriesSwatch, TexOverlay } from "./Texture";
 import { useChartFont } from "../ThemeScope";
@@ -12,6 +12,10 @@ interface Props {
   stackable: boolean;
   format: (v: number) => string;
   formatAxis: (v: number) => string;
+  /** In-chart value label (the latest value); defaults to `format`. */
+  formatLabel?: (v: number) => string;
+  /** The value axis is in seconds: ticks fall on round time steps. */
+  yDuration?: boolean;
   /** Fixed height; follows the viewport height when omitted. */
   height?: number;
   /** Color for a single series. */
@@ -30,14 +34,14 @@ interface Props {
 const M = { top: 10, right: 14, bottom: 28 };
 
 
-export function TimeChart({ data, mark, stackable, format, formatAxis, height: fixedHeight, color, yTitle, trend, showPoints, yFromZero, showValues = true }: Props) {
+export function TimeChart({ data, mark, stackable, format, formatAxis, formatLabel, yDuration, height: fixedHeight, color, yTitle, trend, showPoints, yFromZero, showValues = true }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const autoHeight = useChartHeight(0.32, 200, 440);
   // Keep a landscape aspect in narrow windows.
   const height = fixedHeight ?? (width > 0 ? Math.min(autoHeight, Math.max(200, Math.round(width * 0.45))) : autoHeight);
   const [hover, setHover] = useState<number | null>(null);
-  const { buckets, series, bucket, timeOfDay } = data;
+  const { buckets, series, bucket, timeOfDay, requestedBucket } = data;
   const seriesColor = (label: string, i: number): string =>
     label.startsWith("その他") ? OTHER_COLOR : series.length === 1 && color ? color : SERIES_COLORS[i % SERIES_COLORS.length];
   const n = buckets.length;
@@ -75,13 +79,13 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
     }
   }
   if (lo === Infinity) lo = hi = 0;
-  const ticks = niceTicks(lo, hi, 5);
+  const ticks = niceTicks(lo, hi, 5, yDuration);
   const yMin = ticks[0];
   const yMax = ticks[ticks.length - 1];
   const left = Math.max(...ticks.map((t) => textWidth(formatAxis(t), fs))) + 12;
   const single = series.length === 1 && !useColumns;
   const showEnd = single && showValues;
-  const endLabel = showEnd && n > 0 ? format(series[0].values[n - 1]) : "";
+  const endLabel = showEnd && n > 0 ? (formatLabel ?? format)(series[0].values[n - 1]) : "";
   const right = M.right + (showEnd ? textWidth(endLabel, fs) + 8 : 0);
   const innerW = Math.max(10, width - left - right);
   const top = M.top + (yTitle ? 16 : 0);
@@ -92,8 +96,13 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
   const xCenter = (i: number) => (useColumns ? left + band * (i + 0.5) : n === 1 ? left + innerW / 2 : left + (innerW * i) / (n - 1));
   const colW = Math.max(1, Math.min(24, band * (series.length > 1 && !stacked ? 0.8 / series.length : 0.7)));
 
-  const maxLabels = Math.max(2, Math.floor(innerW / Math.max(56, textWidth(formatTick(buckets[0] ?? 0, bucket, timeOfDay), fs) + 16)));
+  const subDay = bucket === "hour" || bucket === "minute" || bucket === "second";
+  const multiDay = n > 1 && !timeOfDay && subDay && Math.floor(buckets[0] / 86400000) !== Math.floor(buckets[n - 1] / 86400000);
+  const labelW = textWidth(formatTick(buckets[0] ?? 0, bucket, timeOfDay), fs) + (multiDay ? textWidth("12/31 ", fs) : 0);
+  const maxLabels = Math.max(2, Math.floor(innerW / Math.max(56, labelW + 16)));
   const tickEvery = Math.max(1, Math.ceil(n / maxLabels));
+  const tickIdx = buckets.map((_, i) => i).filter((i) => i % tickEvery === 0);
+  const tickText = tickLabels(tickIdx.map((i) => buckets[i]), bucket, timeOfDay);
 
   const onMove = (clientX: number, rectLeft: number) => {
     if (n === 0) return;
@@ -183,13 +192,11 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
                 </text>
               </g>
             ))}
-            {buckets.map((t, i) =>
-              i % tickEvery === 0 ? (
-                <text key={t} x={xCenter(i)} y={height - 8} textAnchor="middle">
-                  {formatTick(t, bucket, timeOfDay)}
-                </text>
-              ) : null,
-            )}
+            {tickIdx.map((i, k) => (
+              <text key={buckets[i]} x={xCenter(i)} y={height - 8} textAnchor="middle">
+                {tickText[k]}
+              </text>
+            ))}
 
             {useColumns &&
               buckets.map((_, b) => {
@@ -327,6 +334,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
           </div>
         )}
       </div>
+      {requestedBucket && <div className="muted chart-note">点が多すぎるため「{BUCKET_LABEL[bucket]}」単位で表示しています</div>}
     </div>
   );
 }

@@ -259,8 +259,19 @@ export function nextBucket(t: number, bucket: ResolvedBucket): number {
 const ORDER: ResolvedBucket[] = ["second", "minute", "hour", "day", "week", "month", "quarter", "year"];
 const SUB_DAY: ResolvedBucket[] = ["second", "minute", "hour"];
 
+/** Most points an auto unit may produce; an explicit unit is allowed more. */
+export const AUTO_MAX_POINTS = 1000;
+export const EXPLICIT_MAX_POINTS = 5000;
+
+const APPROX_DAYS: Record<ResolvedBucket, number> = { second: 1 / 86400, minute: 1 / 1440, hour: 1 / 24, day: 1, week: 7, month: 30, quarter: 91, year: 365 };
+
 /** `hasTime` false (every value at midnight) never yields a sub-day bucket. */
 export function resolveBucket(bucket: TimeBucket, min: number, max: number, hasTime = true): ResolvedBucket {
+  return resolveBucketDetailed(bucket, min, max, hasTime).bucket;
+}
+
+/** `requested` is set only when the unit had to be coarsened to keep the point count renderable. */
+export function resolveBucketDetailed(bucket: TimeBucket, min: number, max: number, hasTime = true): { bucket: ResolvedBucket; requested?: ResolvedBucket } {
   const span = max - min;
   const spanDays = span / DAY;
   let b: ResolvedBucket;
@@ -274,10 +285,10 @@ export function resolveBucket(bucket: TimeBucket, min: number, max: number, hasT
   else if (spanDays <= 365 * 12) b = "quarter";
   else b = "year";
   if (!hasTime && SUB_DAY.includes(b)) b = "day";
-  // Keep the point count renderable.
-  const approx: Record<ResolvedBucket, number> = { second: 1 / 86400, minute: 1 / 1440, hour: 1 / 24, day: 1, week: 7, month: 30, quarter: 91, year: 365 };
-  while (b !== "year" && spanDays / approx[b] > 1000) b = ORDER[ORDER.indexOf(b) + 1];
-  return b;
+  const wanted = b;
+  const limit = bucket === "auto" ? AUTO_MAX_POINTS : EXPLICIT_MAX_POINTS;
+  while (b !== "year" && spanDays / APPROX_DAYS[b] > limit) b = ORDER[ORDER.indexOf(b) + 1];
+  return b === wanted ? { bucket: b } : { bucket: b, requested: wanted };
 }
 
 export interface Series {
@@ -287,6 +298,8 @@ export interface Series {
 
 export interface TimeSeriesResult {
   bucket: ResolvedBucket;
+  /** The unit that was asked for when it produced too many points and `bucket` is coarser. */
+  requestedBucket?: ResolvedBucket;
   /** The x axis is a time-of-day column (buckets are ms from 1970-01-01 00:00), so labels show no date. */
   timeOfDay?: boolean;
   buckets: number[];
@@ -319,7 +332,7 @@ export function timeSeries(
   if (min === Infinity) return { bucket: "day", buckets: [], series: [] };
   // Time-of-day columns have no day or larger units; a day-level choice falls back to hours.
   const requested: TimeBucket = timeOfDay && bucket !== "second" && bucket !== "minute" ? "hour" : bucket;
-  const b = resolveBucket(requested, min, max, timeOfDay || columnHasTime(frame, dateKey));
+  const { bucket: b, requested: coarsenedFrom } = resolveBucketDetailed(requested, min, max, timeOfDay || columnHasTime(frame, dateKey));
   const buckets: number[] = [];
   for (let t = floorDate(min, b); t <= max; t = nextBucket(t, b)) buckets.push(t);
   const bucketIndex = new Map(buckets.map((t, i) => [t, i]));
@@ -353,7 +366,7 @@ export function timeSeries(
     const merged = buckets.map((_, bi) => keys.slice(MAX_SERIES).reduce((a, k) => mergeAcc(a, perSeries.get(k)![bi]), newAcc(measure.agg)));
     series.push({ label: `${OTHER_LABEL} (${keys.length - MAX_SERIES})`, values: merged.map(emptyValue) });
   }
-  return { bucket: b, buckets, series, ...(timeOfDay ? { timeOfDay } : {}) };
+  return { bucket: b, buckets, series, ...(coarsenedFrom ? { requestedBucket: coarsenedFrom } : {}), ...(timeOfDay ? { timeOfDay } : {}) };
 }
 
 export interface Bin {
@@ -369,6 +382,20 @@ export function niceStep(range: number, target: number): number {
   const norm = raw / mag;
   const step = norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1;
   return step * mag;
+}
+
+const DURATION_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+
+/** Round step (seconds) for a duration axis: 1/2/5/10/15/30 s or min, 1/2/3/6/12 h, then 1/2/5×10^n days. 0 when the range is under a second. */
+export function durationStep(range: number, target: number): number {
+  if (range <= 0 || !Number.isFinite(range)) return 0;
+  const raw = range / target;
+  if (raw < 0.5) return 0;
+  const step = DURATION_STEPS.find((s) => s >= raw);
+  if (step) return step;
+  const days = raw / 86400;
+  const mag = 10 ** Math.floor(Math.log10(days));
+  return ([1, 2, 5, 10].find((m) => m * mag >= days - 1e-9) ?? 10) * mag * 86400;
 }
 
 /** `bins`: exact number of equal-width bins from min to max; null = round-number edges, count chosen from the row count. */
@@ -387,7 +414,7 @@ export function histogram(frame: Frame, rows: Uint32Array, key: string, bins?: n
   if (min === max) return [{ x0: min, x1: max, count: vals.length }];
   const fixed = bins && bins > 0 ? Math.floor(bins) : 0;
   const target = Math.min(30, Math.max(5, Math.ceil(Math.log2(vals.length) + 1)));
-  const step = fixed ? (max - min) / fixed : niceStep(max - min, target);
+  const step = fixed ? (max - min) / fixed : (col.type === "duration" && durationStep(max - min, target)) || niceStep(max - min, target);
   const start = fixed ? min : Math.floor(min / step) * step;
   const n = fixed || Math.max(1, Math.ceil((max - start) / step + 1e-9));
   const out: Bin[] = Array.from({ length: n }, (_, i) => ({ x0: start + i * step, x1: start + (i + 1) * step, count: 0 }));
@@ -585,7 +612,7 @@ export function timeSeriesColumns(
   for (const key of columns.slice(0, MAX_SERIES + 1)) {
     const r = timeSeries(frame, rows, dateKey, bucket, { agg: agg === "count" ? "sum" : agg, column: key }, null);
     if (r.series.length === 0) continue;
-    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [], ...(r.timeOfDay ? { timeOfDay: true } : {}) };
+    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [], ...(r.requestedBucket ? { requestedBucket: r.requestedBucket } : {}), ...(r.timeOfDay ? { timeOfDay: true } : {}) };
     result.series.push({ label: label(key), values: r.series[0].values });
   }
   return result;

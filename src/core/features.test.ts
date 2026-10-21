@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { columnHasTime, comparePeriods, filterRows, floorDate, groupBy, nextBucket, pivot, resolveBucket, scatterPoints, timeSeries } from "./aggregate";
-import { createDashboard, mergeColumns } from "./autoDashboard";
+import { columnHasTime, comparePeriods, filterRows, floorDate, groupBy, nextBucket, pivot, durationStep, resolveBucket, resolveBucketDetailed, scatterPoints, timeSeries } from "./aggregate";
+import { createDashboard, defaultWidget, mergeColumns, niceCeil } from "./autoDashboard";
 import { datePart, datePartOrder, displayFormula, FormulaError, parseFormula, toStoredFormula } from "./derive";
 import { presetRange } from "./filters";
-import { formatDate, formatNumber, formatTick, measureAxisTitle, setNumberStyle } from "./format";
+import { formatDate, formatNumber, formatTick, measureAxisTitle, setNumberStyle, tickLabels } from "./format";
+import { niceTicks } from "../components/charts/util";
 import { planExport, renderExportHtml } from "./export";
 import { appendRows, countDuplicateRows, parseExportHtml } from "./exportFormat";
 import { buildFrame } from "./frame";
@@ -438,5 +439,67 @@ describe("sub-day time units", () => {
     expect(formatTick(t, "second")).toBe("14:05:30");
     expect(formatDate(t, "hour")).toBe("2025/01/05 14時");
     expect(formatDate(t, "minute")).toBe("2025/01/05 14:05");
+  });
+});
+
+describe("time axis and chart labels", () => {
+  const t0 = Date.UTC(2025, 2, 2, 8);
+  const DAYMS = 86400000;
+  const HOUR = 3600000;
+  const col = (key: string, type: ColumnMeta["type"]): ColumnMeta => calc(key, key, undefined, type);
+
+  it("keeps an explicit minute/second unit up to 5000 points and reports coarsening", () => {
+    // 10 days of minutes is 14400 points: too many, so hours.
+    expect(resolveBucketDetailed("minute", t0, t0 + 10 * DAYMS)).toEqual({ bucket: "hour", requested: "minute" });
+    // 2 days of minutes is 2880 points: fine for an explicit choice, too many for auto.
+    expect(resolveBucketDetailed("minute", t0, t0 + 2 * DAYMS)).toEqual({ bucket: "minute" });
+    expect(resolveBucketDetailed("second", t0, t0 + 1 * HOUR)).toEqual({ bucket: "second" });
+    expect(resolveBucketDetailed("second", t0, t0 + 10 * DAYMS)).toEqual({ bucket: "hour", requested: "second" });
+    expect(resolveBucket("auto", t0, t0 + 20 * HOUR)).toBe("hour");
+    const frame = buildFrame({ headers: ["d"], rows: [["2025-03-02 08:00"], ["2025-03-12 08:00"]] }, [col("d", "date")]);
+    const rows = Uint32Array.from([0, 1]);
+    const r = timeSeries(frame, rows, "d", "minute", { agg: "count", column: null }, null);
+    expect(r.bucket).toBe("hour");
+    expect(r.requestedBucket).toBe("minute");
+    expect(timeSeries(frame, rows, "d", "hour", { agg: "count", column: null }, null).requestedBucket).toBeUndefined();
+  });
+
+  it("puts the date on the first tick and wherever the day changes", () => {
+    const ts = [t0, t0 + 6 * HOUR, t0 + 12 * HOUR, t0 + 18 * HOUR, t0 + 30 * HOUR];
+    expect(tickLabels(ts, "hour")).toEqual(["3/2 8:00", "14:00", "20:00", "3/3 2:00", "14:00"]);
+    expect(tickLabels([t0, t0 + 6 * HOUR], "hour")).toEqual(["08:00", "14:00"]);
+    expect(tickLabels([t0, t0 + DAYMS], "minute")).toEqual(["3/2 8:00", "3/3 8:00"]);
+    expect(tickLabels([t0, t0 + DAYMS], "hour", true)).toEqual(["08:00", "08:00"]);
+    expect(tickLabels([t0, t0 + 3 * DAYMS], "day")).toEqual(["3/2", "3/5"]);
+  });
+
+  it("rounds a gauge target up to 1, 2, 2.5 or 5 times a power of ten", () => {
+    expect(niceCeil(1280171722)).toBe(2e9);
+    expect(niceCeil(306702244)).toBe(500000000);
+    expect(niceCeil(2.2)).toBe(2.5);
+    expect(niceCeil(0.0023)).toBe(0.0025);
+    expect(niceCeil(100)).toBe(100);
+    expect(niceCeil(101)).toBe(200);
+    expect(niceCeil(5001)).toBe(10000);
+    expect(niceCeil(0)).toBe(100);
+    expect(niceCeil(NaN)).toBe(100);
+    const frame = buildFrame({ headers: ["v"], rows: [[300], [450]] }, [col("v", "number")]);
+    const w = defaultWidget("gauge", [col("v", "number")], frame);
+    // 300 + 450 summed (or averaged to 375): either way a round number at or above the value.
+    expect(w.kind === "gauge" && [500, 1000]).toContain(w.kind === "gauge" ? w.target : 0);
+  });
+
+  it("chooses round steps on duration axes", () => {
+    expect(durationStep(100 * 60, 5)).toBe(1800);
+    expect(durationStep(3 * 60, 5)).toBe(60);
+    expect(durationStep(45, 5)).toBe(10);
+    expect(durationStep(10 * 3600, 5)).toBe(7200);
+    expect(durationStep(30 * 86400, 5)).toBe(86400 * 10);
+    expect(durationStep(0.2, 5)).toBe(0);
+    // 0 to 100 minutes: not 16.7 / 33.3 minutes.
+    const ticks = niceTicks(0, 100 * 60, 5, true);
+    expect(ticks.every((v) => v % 60 === 0)).toBe(true);
+    expect(ticks).toEqual([0, 1800, 3600, 5400, 7200]);
+    expect(niceTicks(0, 100, 5, false)).toEqual([0, 50, 100]);
   });
 });

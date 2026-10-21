@@ -6,6 +6,8 @@ import { clampTooltip, textWidth, truncate, useWidth } from "./util";
 interface Props {
   data: HeatmapResult;
   format: (v: number) => string;
+  /** Legend numbers; defaults to `format` (tooltips keep `format`). */
+  formatLabel?: (v: number) => string;
   /** Axis names for the tooltip and the screen reader text. */
   xName: string;
   yName: string;
@@ -23,7 +25,7 @@ function shade(color: string, v: number, min: number, max: number): string {
   return `color-mix(in oklab, ${color} ${p}%, var(--surface))`;
 }
 
-export function HeatmapChart({ data, format, xName, yName, color, valueTitle }: Props) {
+export function HeatmapChart({ data, format, formatLabel, xName, yName, color, valueTitle }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   // Keyboard users get one tab stop and move between cells with the arrow keys.
@@ -129,9 +131,9 @@ export function HeatmapChart({ data, format, xName, yName, color, valueTitle }: 
       )}
       {nx > 0 && ny > 0 && (
         <div className="heat-legend" aria-label="色の凡例">
-          <span className="heat-legend-num">{format(min)}</span>
+          <span className="heat-legend-num">{(formatLabel ?? format)(min)}</span>
           <span className="heat-legend-bar" style={{ background: `linear-gradient(to right, ${shade(color, min, min, max + (max === min ? 1 : 0))}, ${shade(color, max, min, max)})` }} aria-hidden />
-          <span className="heat-legend-num">{format(max)}</span>
+          <span className="heat-legend-num">{(formatLabel ?? format)(max)}</span>
         </div>
       )}
       {shown && cells[shown.r]?.[shown.c] !== undefined && (

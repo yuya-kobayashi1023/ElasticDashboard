@@ -114,6 +114,9 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
     const nf = w.numberFormat;
     const fmt = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta, "full", nf);
     const fmtAxis = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta, "compact", nf);
+    // In-chart labels use the compact number style; durations stay in full ("1時間23分") because compact would round them.
+    const isDuration = (m: Parameters<typeof formatMeasure>[1]) => !!m.column && m.agg !== "count" && m.agg !== "distinct" && frame.meta.get(m.column)?.type === "duration";
+    const fmtLabel = (m: Parameters<typeof formatMeasure>[1]) => (isDuration(m) ? fmt(m) : fmtAxis(m));
     const titles = w.axisTitles !== false;
     const color = `var(--series-${(w.color ?? 0) + 1})`;
     const additive = (m: { agg: string }) => m.agg === "count" || m.agg === "sum";
@@ -149,6 +152,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
           <BarChart
             bars={bars}
             format={fmt(w.measure)}
+            formatLabel={fmtLabel(w.measure)}
             showShare={w.showShare ?? additive(w.measure)}
             shareTotal={sum}
             orientation={w.orientation}
@@ -178,6 +182,8 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             stackable={additive(w.measure)}
             format={fmt(timeMeasure)}
             formatAxis={fmtAxis(timeMeasure)}
+            formatLabel={fmtLabel(timeMeasure)}
+            yDuration={isDuration(timeMeasure)}
             yTitle={titles ? `${accumulate ? "累積 " : ""}${w.series?.length ? columnAxisTitle(frame.meta.get(w.series[0]), "") : measureAxisTitle(w.measure, frame.meta)}` : undefined}
             color={color}
             trend={trend}
@@ -206,6 +212,8 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             formatY={(v) => formatValue(v, ym, "compact", nf)}
             xLabel={titles ? columnAxisTitle(xm, w.x) : (xm?.label ?? w.x)}
             yLabel={titles ? columnAxisTitle(ym, w.y) : (ym?.label ?? w.y)}
+            xDuration={xm?.type === "duration"}
+            yDuration={ym?.type === "duration"}
             color={color}
             pointSize={w.pointSize}
             trendLine={w.trendLine}
@@ -238,6 +246,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             slices={slices}
             total={total}
             format={fmt(w.measure)}
+            formatLabel={fmtLabel(w.measure)}
             showPercent={w.showPercent !== false}
             selected={filter && filter.kind === "values" ? filter.values : []}
             onToggle={onToggleValue && frame.columns.get(w.dimension)?.type !== "number" ? (label) => onToggleValue(w.dimension, label) : undefined}
@@ -248,12 +257,12 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         const data = heatmapGrid(frame, rows, w.x, w.y, w.measure);
         if (data.xLabels.length === 0 || data.yLabels.length === 0 || data.cells.every((r) => r.every((v) => v === null))) return <Empty />;
         const axisName = (a: HeatAxis) => (a.unit ? HEAT_UNIT_LABEL[a.unit] : columnLabel(frame.meta, a.column));
-        return <HeatmapChart data={data} format={fmt(w.measure)} xName={axisName(w.x)} yName={axisName(w.y)} color={color} valueTitle={titles ? measureAxisTitle(w.measure, frame.meta) : undefined} />;
+        return <HeatmapChart data={data} format={fmt(w.measure)} formatLabel={fmtLabel(w.measure)} xName={axisName(w.x)} yName={axisName(w.y)} color={color} valueTitle={titles ? measureAxisTitle(w.measure, frame.meta) : undefined} />;
       }
       case "note":
         return <NoteBlock text={w.text} />;
       case "gauge":
-        return <GaugeChart value={aggregate(frame, rows, w.measure)} target={w.target} min={w.min ?? 0} format={fmt(w.measure)} color={color} />;
+        return <GaugeChart value={aggregate(frame, rows, w.measure)} target={w.target} min={w.min ?? 0} format={fmt(w.measure)} formatLabel={fmtLabel(w.measure)} color={color} />;
       case "table": {
         const avail = [...frame.meta.values()].filter((c) => !c.hidden && frame.columns.has(c.key)).map((c) => c.key);
         const shown = w.columns ? new Set(w.columns) : null;
@@ -270,6 +279,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             filterRow={w.filterRow !== false}
             rowNumbers={!!w.rowNumbers}
             wrap={!!w.wrap}
+            noneSelected={!!w.columns && w.columns.length === 0}
           />
         );
       }

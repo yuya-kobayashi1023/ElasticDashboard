@@ -1,6 +1,6 @@
 import { ChartBarIcon, ChartLineIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
-import { columnHasTime } from "../../core/aggregate";
+import { columnHasTime, extent, resolveBucketDetailed } from "../../core/aggregate";
 import { isContinuousType } from "../../core/columnTypes";
 import { BUCKET_LABEL } from "../../core/format";
 import type { TimeBucket, TimeWidget } from "../../core/types";
@@ -11,6 +11,15 @@ export function TimeData({ widget, columns, frame, set }: FieldProps<TimeWidget>
   const isTimeOfDay = frame.columns.get(widget.dateColumn)?.type === "time";
   // Sub-day units need a time part in the data; date-only columns are aggregated by day.
   const noTimePart = useMemo(() => !!widget.dateColumn && !columnHasTime(frame, widget.dateColumn), [frame, widget.dateColumn]);
+  // Over the whole data (filters are not applied here), so the hint can differ slightly from the chart.
+  const coarsened = useMemo(() => {
+    if (widget.bucket === "auto" || !widget.dateColumn) return null;
+    const ext = extent(frame, widget.dateColumn);
+    if (!ext) return null;
+    const k = isTimeOfDay ? 1000 : 1;
+    const r = resolveBucketDetailed(isTimeOfDay && widget.bucket !== "second" && widget.bucket !== "minute" ? "hour" : widget.bucket, ext[0] * k, ext[1] * k, isTimeOfDay || !noTimePart);
+    return r.requested ? r.bucket : null;
+  }, [frame, widget.dateColumn, widget.bucket, isTimeOfDay, noTimePart]);
   return (
     <>
       <div className="field-row">
@@ -31,6 +40,7 @@ export function TimeData({ widget, columns, frame, set }: FieldProps<TimeWidget>
           </select>
         </label>
       </div>
+      {coarsened && <span className="field-hint">点が多すぎるため「{BUCKET_LABEL[coarsened]}」単位で表示します</span>}
       {noTimePart && ["second", "minute", "hour"].includes(widget.bucket) && <span className="field-hint">この列には時刻が含まれていないため、日単位で集計します</span>}
       <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
       <label className="field">

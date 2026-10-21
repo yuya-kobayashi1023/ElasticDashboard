@@ -406,6 +406,10 @@ textarea {
   font-size: 12px;
   margin-bottom: 4px;
 }
+.chart .chart-note {
+  font-size: 12px;
+  margin-top: 4px;
+}
 .chart .value-label {
   fill: var(--text-primary);
   font-variant-numeric: tabular-nums;
