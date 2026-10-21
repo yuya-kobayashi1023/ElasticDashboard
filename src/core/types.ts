@@ -40,6 +40,16 @@ export interface NumberFormat {
   decimals: number | null;
 }
 
+/** Per-widget override of how values are written; undefined fields follow the dashboard / column settings. */
+export interface WidgetNumberFormat {
+  /** "auto" = the dashboard's number style. */
+  style?: "auto" | NumberStyle;
+  /** null / undefined = the column's setting. */
+  decimals?: number | null;
+  prefix?: string;
+  suffix?: string;
+}
+
 export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | "day" | "hour" | "minute";
 
 export type Derivation =
@@ -114,6 +124,9 @@ interface WidgetBase {
   color?: number;
   /** Show value-axis titles with units on charts; undefined = shown */
   axisTitles?: boolean;
+  /** Short explanation shown under the title. */
+  subtitle?: string;
+  numberFormat?: WidgetNumberFormat;
 }
 
 export type CompareBucket = "hour" | "day" | "week" | "month" | "quarter" | "year";
@@ -130,6 +143,10 @@ export interface KpiWidget extends WidgetBase {
   measure: Measure;
   /** Show the latest period against the previous one. */
   compare?: KpiCompare | null;
+  /** Sparkline next to the comparison; undefined = shown. */
+  showSparkline?: boolean;
+  /** Goal for the value: shows the achievement rate and a progress bar. */
+  target?: number | null;
 }
 
 export type BarSort = "value-desc" | "value-asc" | "label";
@@ -140,6 +157,14 @@ export interface BarWidget extends WidgetBase {
   measure: Measure;
   limit: number;
   sort: BarSort;
+  /** undefined = horizontal */
+  orientation?: "horizontal" | "vertical";
+  /** Value labels at the bar ends; undefined = shown. */
+  showValues?: boolean;
+  /** Share of total in the tooltip; undefined = for sums and counts only. */
+  showShare?: boolean;
+  /** Fold the groups beyond `limit` into "その他"; undefined = on. */
+  otherBucket?: boolean;
 }
 
 export type TimeBucket = "auto" | "second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year";
@@ -153,11 +178,23 @@ export interface TimeWidget extends WidgetBase {
   /** Several numeric columns side by side (wide data such as one column per prefecture). Overrides split. */
   series?: string[] | null;
   mark: "line" | "column";
+  /** Running total over the buckets (sums and counts). */
+  cumulative?: boolean;
+  /** Trailing moving average over this many points (single series only). */
+  movingAverage?: number | null;
+  /** Dots on every data point of a line. */
+  showPoints?: boolean;
+  /** Lines start the value axis at 0; undefined = true, false fits the data range. */
+  yFromZero?: boolean;
+  /** Label the last value of a single series; undefined = shown. */
+  showValues?: boolean;
 }
 
 export interface HistogramWidget extends WidgetBase {
   kind: "histogram";
   column: string;
+  /** Approximate number of bins; null / undefined = automatic. */
+  bins?: number | null;
 }
 
 export interface ScatterWidget extends WidgetBase {
@@ -165,6 +202,10 @@ export interface ScatterWidget extends WidgetBase {
   x: string;
   y: string;
   colorBy: string | null;
+  /** undefined = "m" */
+  pointSize?: "s" | "m" | "l";
+  /** Least-squares line with the correlation coefficient. */
+  trendLine?: boolean;
 }
 
 export interface PivotWidget extends WidgetBase {
@@ -172,6 +213,13 @@ export interface PivotWidget extends WidgetBase {
   rows: string;
   cols: string;
   measure: Measure;
+  /** Shade cells by value; undefined = on. */
+  heatmap?: boolean;
+  /** Totals row and column; undefined = for additive and min / max / avg measures. */
+  showTotals?: boolean;
+  /** undefined = 20 rows / 10 columns */
+  rowLimit?: number;
+  colLimit?: number;
 }
 
 export interface TableWidget extends WidgetBase {

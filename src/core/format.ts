@@ -1,5 +1,5 @@
 import type { ResolvedBucket } from "./aggregate";
-import type { Agg, ColumnMeta, ColumnType, Measure, NumberStyle, Widget } from "./types";
+import type { Agg, ColumnMeta, ColumnType, Measure, NumberStyle, Widget, WidgetNumberFormat } from "./types";
 
 export const AGG_LABEL: Record<Agg, string> = {
   count: "件数",
@@ -44,7 +44,8 @@ export const BUCKET_LABEL: Record<ResolvedBucket | "auto", string> = {
 };
 
 const full = new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 2 });
-const compact = new Intl.NumberFormat("ja-JP", { notation: "compact", maximumFractionDigits: 1 });
+const compactJa = (digits: number) => new Intl.NumberFormat("ja-JP", { notation: "compact", maximumFractionDigits: digits });
+const compact = compactJa(1);
 
 let numberStyle: NumberStyle = "en";
 
@@ -64,37 +65,41 @@ const EN_UNITS: [number, string][] = [
   [1e3, "k"],
 ];
 
-function compactEn(v: number): string {
+function compactEn(v: number, digits = 1): string {
   const abs = Math.abs(v);
+  const k = 10 ** digits;
   let i = EN_UNITS.findIndex(([base]) => abs >= base);
   let [base, unit] = EN_UNITS[i];
-  let n = Math.round((abs / base) * 10) / 10;
+  let n = Math.round((abs / base) * k) / k;
   // 999.96k rounds up to 1000k: move to the next unit.
   if (n >= 1000 && i > 0) {
     i -= 1;
     [base, unit] = EN_UNITS[i];
-    n = Math.round((abs / base) * 10) / 10;
+    n = Math.round((abs / base) * k) / k;
   }
-  return `${v < 0 ? "-" : ""}${n.toLocaleString("en-US", { maximumFractionDigits: 1 })}${unit}`;
+  return `${v < 0 ? "-" : ""}${n.toLocaleString("en-US", { maximumFractionDigits: digits })}${unit}`;
 }
 
-/** Compact form of a number in the current style, or null when it stays in full digits. */
-function compactBody(v: number): string | null {
+/** Compact form of a number in the given style (default: the dashboard's), or null when it stays in full digits. */
+function compactBody(v: number, style: NumberStyle = numberStyle, digits = 1): string | null {
   const abs = Math.abs(v);
-  if (numberStyle === "en" && abs >= 1000) return compactEn(v);
-  if (numberStyle === "ja" && abs >= 10000) return compact.format(v);
+  if (style === "en" && abs >= 1000) return compactEn(v, digits);
+  if (style === "ja" && abs >= 10000) return (digits === 1 ? compact : compactJa(digits)).format(v);
   return null;
 }
 
-export function formatNumber(v: number, meta?: ColumnMeta | null, style: "full" | "compact" = "full"): string {
+/** `opts` is a widget's override; fields it leaves out fall back to the column and dashboard settings. */
+export function formatNumber(v: number, meta?: ColumnMeta | null, style: "full" | "compact" = "full", opts?: WidgetNumberFormat): string {
   if (Number.isNaN(v)) return "—";
-  const prefix = meta?.format.prefix ?? "";
-  const suffix = meta?.format.suffix ?? "";
+  const prefix = opts?.prefix || (meta?.format.prefix ?? "");
+  const suffix = opts?.suffix || (meta?.format.suffix ?? "");
+  const decimals = typeof opts?.decimals === "number" ? opts.decimals : (meta?.format.decimals ?? null);
+  const styleName = opts?.style && opts.style !== "auto" ? opts.style : numberStyle;
   let body: string;
-  const short = style === "compact" ? compactBody(v) : null;
+  const short = style === "compact" ? compactBody(v, styleName, typeof opts?.decimals === "number" ? opts.decimals : 1) : null;
   if (short !== null) body = short;
-  else if (meta && meta.format.decimals !== null) {
-    body = v.toLocaleString("ja-JP", { minimumFractionDigits: meta.format.decimals, maximumFractionDigits: meta.format.decimals });
+  else if (decimals !== null) {
+    body = v.toLocaleString("ja-JP", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   } else body = full.format(v);
   return `${prefix}${body}${suffix}`;
 }
@@ -183,8 +188,8 @@ export function formatDuration(sec: number, style: "full" | "compact" = "full"):
 const percent = new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 1 });
 
 /** Cell / tick value of a column in its own type. */
-export function formatValue(v: number, meta?: ColumnMeta | null, style: "full" | "compact" = "full"): string {
-  if (!meta) return formatNumber(v, null, style);
+export function formatValue(v: number, meta?: ColumnMeta | null, style: "full" | "compact" = "full", opts?: WidgetNumberFormat): string {
+  if (!meta) return formatNumber(v, null, style, opts);
   if (Number.isNaN(v)) return "—";
   switch (meta.type) {
     case "date":
@@ -196,7 +201,7 @@ export function formatValue(v: number, meta?: ColumnMeta | null, style: "full" |
     case "boolean":
       return v ? "はい" : "いいえ";
     default:
-      return formatNumber(v, meta, style);
+      return formatNumber(v, meta, style, opts);
   }
 }
 
@@ -245,17 +250,17 @@ export function measureLabel(m: Measure, meta: Map<string, ColumnMeta> | ColumnM
 }
 
 /** Value formatting for a measure result (counts never inherit the column's unit). */
-export function formatMeasure(v: number, m: Measure, meta: Map<string, ColumnMeta>, style: "full" | "compact" = "full"): string {
-  if (m.agg === "count" || m.agg === "distinct" || !m.column) return formatNumber(v, null, style);
+export function formatMeasure(v: number, m: Measure, meta: Map<string, ColumnMeta>, style: "full" | "compact" = "full", opts?: WidgetNumberFormat): string {
+  if (m.agg === "count" || m.agg === "distinct" || !m.column) return formatNumber(v, null, style, opts);
   const col = meta.get(m.column);
   if (col?.type === "date") return formatDate(v, col.dateUnit === "year" ? "year" : "day");
   if (col?.type === "time") return formatTimeOfDay(v);
   if (col?.type === "duration") return formatDuration(v, style);
-  if (col?.type === "boolean") return m.agg === "avg" ? `${percent.format(v * 100)}%` : formatNumber(v, null, style);
+  if (col?.type === "boolean") return m.agg === "avg" ? `${percent.format(v * 100)}%` : formatNumber(v, null, style, opts);
   if (m.agg === "avg" && col && col.format.decimals === 0) {
-    return formatNumber(v, { ...col, format: { ...col.format, decimals: null } }, style);
+    return formatNumber(v, { ...col, format: { ...col.format, decimals: null } }, style, opts);
   }
-  return formatNumber(v, col, style);
+  return formatNumber(v, col, style, opts);
 }
 
 function unitOf(col: ColumnMeta | undefined): string {

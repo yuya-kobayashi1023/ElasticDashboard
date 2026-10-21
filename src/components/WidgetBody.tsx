@@ -7,9 +7,11 @@ import type { Filter, Frame, Widget } from "../core/types";
 import { BarChart } from "./charts/BarChart";
 import { Histogram } from "./charts/Histogram";
 import { KpiCompare } from "./charts/KpiCompare";
+import { KpiTarget } from "./charts/KpiTarget";
 import { PivotTable } from "./charts/PivotTable";
 import { ScatterChart } from "./charts/ScatterChart";
 import { TimeChart } from "./charts/TimeChart";
+import { cumulative, movingAverage } from "../core/stats";
 import { orderedTableKeys } from "../core/tableFilter";
 import { DataTable } from "./DataTable";
 import { useNumberStyle } from "./ThemeScope";
@@ -83,8 +85,9 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
   const numberStyle = useNumberStyle();
   const content = useMemo(() => {
     if (problem) return null;
-    const fmt = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta);
-    const fmtAxis = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta, "compact");
+    const nf = w.numberFormat;
+    const fmt = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta, "full", nf);
+    const fmtAxis = (m: Parameters<typeof formatMeasure>[1]) => (v: number) => formatMeasure(v, m, frame.meta, "compact", nf);
     const titles = w.axisTitles !== false;
     const color = `var(--series-${(w.color ?? 0) + 1})`;
     const additive = (m: { agg: string }) => m.agg === "count" || m.agg === "sum";
@@ -93,24 +96,38 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         if (w.compare) {
           const cmp = comparePeriods(frame, rows, w.measure, w.compare.dateColumn, w.compare.bucket);
           if (!cmp) return <Empty />;
-          return <KpiCompare data={cmp} format={fmt(w.measure)} upIsGood={w.compare.upIsGood} color={color} />;
+          return (
+            <>
+              <KpiCompare data={cmp} format={fmt(w.measure)} upIsGood={w.compare.upIsGood} color={color} showSparkline={w.showSparkline !== false} />
+              {typeof w.target === "number" && <KpiTarget value={cmp.current} target={w.target} format={fmt(w.measure)} color={color} />}
+            </>
+          );
         }
         const v = aggregate(frame, rows, w.measure);
         const big = Math.abs(v) >= 1e8;
-        return <div className="kpi-value">{formatMeasure(v, w.measure, frame.meta, big ? "compact" : "full")}</div>;
+        return (
+          <>
+            <div className="kpi-value">{formatMeasure(v, w.measure, frame.meta, big ? "compact" : "full", nf)}</div>
+            {typeof w.target === "number" && <KpiTarget value={v} target={w.target} format={fmt(w.measure)} color={color} />}
+          </>
+        );
       }
       case "bar": {
         // A chart ignores the filter on its own dimension so other values stay selectable; selection is shown by emphasis.
         const filter = filters.find((f) => f.column === w.dimension && f.kind === "values");
         const own = filter && filter.kind === "values" && filter.values.length > 0 ? filterRows(frame, filters, filter.id) : rows;
-        const { bars } = groupBy(frame, own, w.dimension, w.measure, w.limit, w.sort, frame.meta.get(w.dimension)?.order);
+        const { bars, sum } = groupBy(frame, own, w.dimension, w.measure, w.limit, w.sort, frame.meta.get(w.dimension)?.order, w.otherBucket !== false);
         if (bars.length === 0) return <Empty />;
         const sel = filter && filter.kind === "values" ? filter.values : [];
         return (
           <BarChart
             bars={bars}
             format={fmt(w.measure)}
-            showShare={additive(w.measure)}
+            showShare={w.showShare ?? additive(w.measure)}
+            shareTotal={sum}
+            orientation={w.orientation}
+            showValues={w.showValues !== false}
+            formatAxis={fmtAxis(w.measure)}
             selected={sel}
             color={color}
             valueTitle={titles ? measureAxisTitle(w.measure, frame.meta) : undefined}
@@ -119,10 +136,14 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         );
       }
       case "time": {
-        const data = w.series?.length
+        let data = w.series?.length
           ? timeSeriesColumns(frame, rows, w.dateColumn, w.bucket, w.measure.agg, w.series, (k) => columnLabel(frame.meta, k))
           : timeSeries(frame, rows, w.dateColumn, w.bucket, w.measure, w.split);
         if (data.buckets.length === 0) return <Empty />;
+        const accumulate = !!w.cumulative && additive(w.measure);
+        if (accumulate) data = { ...data, series: data.series.map((s) => ({ ...s, values: cumulative(s.values) })) };
+        const trend =
+          w.movingAverage && data.series.length === 1 ? { label: `${w.movingAverage}点移動平均`, values: movingAverage(data.series[0].values, w.movingAverage) } : undefined;
         const timeMeasure = w.series?.length ? { agg: w.measure.agg === "count" ? "sum" : w.measure.agg, column: w.series[0] } : w.measure;
         return (
           <TimeChart
@@ -131,16 +152,20 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             stackable={additive(w.measure)}
             format={fmt(timeMeasure)}
             formatAxis={fmtAxis(timeMeasure)}
-            yTitle={titles ? (w.series?.length ? columnAxisTitle(frame.meta.get(w.series[0]), "") : measureAxisTitle(w.measure, frame.meta)) : undefined}
+            yTitle={titles ? `${accumulate ? "累積 " : ""}${w.series?.length ? columnAxisTitle(frame.meta.get(w.series[0]), "") : measureAxisTitle(w.measure, frame.meta)}` : undefined}
             color={color}
+            trend={trend}
+            showPoints={w.showPoints}
+            yFromZero={w.yFromZero}
+            showValues={w.showValues !== false}
           />
         );
       }
       case "histogram": {
-        const bins = histogram(frame, rows, w.column);
+        const bins = histogram(frame, rows, w.column, w.bins);
         if (bins.length === 0) return <Empty />;
         const meta = frame.meta.get(w.column);
-        return <Histogram bins={bins} formatX={(v) => formatValue(v, meta, "compact")} xTitle={titles ? columnAxisTitle(meta, w.column) : undefined} color={color} />;
+        return <Histogram bins={bins} formatX={(v) => formatValue(v, meta, "compact", w.numberFormat)} xTitle={titles ? columnAxisTitle(meta, w.column) : undefined} color={color} />;
       }
       case "scatter": {
         const { points, groups } = scatterPoints(frame, rows, w.x, w.y, w.colorBy);
@@ -151,16 +176,18 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
           <ScatterChart
             points={points}
             groups={groups}
-            formatX={(v) => formatValue(v, xm, "compact")}
-            formatY={(v) => formatValue(v, ym, "compact")}
+            formatX={(v) => formatValue(v, xm, "compact", nf)}
+            formatY={(v) => formatValue(v, ym, "compact", nf)}
             xLabel={titles ? columnAxisTitle(xm, w.x) : (xm?.label ?? w.x)}
             yLabel={titles ? columnAxisTitle(ym, w.y) : (ym?.label ?? w.y)}
             color={color}
+            pointSize={w.pointSize}
+            trendLine={w.trendLine}
           />
         );
       }
       case "pivot": {
-        const data = pivot(frame, rows, w.rows, w.cols, w.measure);
+        const data = pivot(frame, rows, w.rows, w.cols, w.measure, w.rowLimit, w.colLimit);
         if (data.rowLabels.length === 0) return <Empty />;
         return (
           <PivotTable
@@ -168,8 +195,9 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
             rowLabel={columnLabel(frame.meta, w.rows)}
             colLabel={columnLabel(frame.meta, w.cols)}
             format={fmt(w.measure)}
-            showTotals={additive(w.measure) || w.measure.agg === "min" || w.measure.agg === "max" || w.measure.agg === "avg"}
+            showTotals={w.showTotals ?? (additive(w.measure) || w.measure.agg === "min" || w.measure.agg === "max" || w.measure.agg === "avg")}
             color={color}
+            heatmap={w.heatmap !== false}
           />
         );
       }

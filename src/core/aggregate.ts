@@ -165,7 +165,9 @@ export function groupBy(
   sort: BarSort,
   /** Explicit category order used by the "label" sort (weekdays, months). */
   order?: string[],
-): { bars: Bar[]; total: number } {
+  /** false drops the groups beyond `limit` instead of folding them into "その他". */
+  otherBucket = true,
+): { bars: Bar[]; total: number; sum: number } {
   const groups = groupAccs(frame, rows, key, measure);
   const entries = [...groups].map(([label, acc]) => ({ label, acc, value: finish(acc, measure.agg) }));
   const byValue = (a: { value: number }, b: { value: number }) => (Number.isNaN(a.value) ? 1 : Number.isNaN(b.value) ? -1 : b.value - a.value);
@@ -175,7 +177,7 @@ export function groupBy(
   if (entries.length > limit) {
     kept = entries.slice(0, limit);
     const rest = entries.slice(limit).reduce((a, e) => mergeAcc(a, e.acc), newAcc(measure.agg));
-    other = { label: `${OTHER_LABEL} (${entries.length - limit})`, value: finish(rest, measure.agg), isOther: true };
+    if (otherBucket) other = { label: `${OTHER_LABEL} (${entries.length - limit})`, value: finish(rest, measure.agg), isOther: true };
   }
   const bars: Bar[] = kept.map((e) => ({ label: e.label, value: e.value, isOther: false }));
   if (sort === "value-asc") bars.reverse();
@@ -184,7 +186,9 @@ export function groupBy(
     bars.sort((a, b) => (rank ? (rank.get(a.label) ?? 1e9) - (rank.get(b.label) ?? 1e9) : 0) || collator.compare(a.label, b.label));
   }
   if (other) bars.push(other);
-  return { bars, total: entries.length };
+  // Over every group, so shares stay correct when the rest is not shown.
+  const sum = entries.reduce((a, e) => (Number.isNaN(e.value) ? a : a + e.value), 0);
+  return { bars, total: entries.length, sum };
 }
 
 const DAY = 86400000;
@@ -366,7 +370,8 @@ export function niceStep(range: number, target: number): number {
   return step * mag;
 }
 
-export function histogram(frame: Frame, rows: Uint32Array, key: string): Bin[] {
+/** `bins`: exact number of equal-width bins from min to max; null = round-number edges, count chosen from the row count. */
+export function histogram(frame: Frame, rows: Uint32Array, key: string, bins?: number | null): Bin[] {
   const col = frame.columns.get(key);
   if (!col || !isFloatColumn(col) || !isContinuousType(col.type)) return [];
   const vals: number[] = [];
@@ -379,13 +384,14 @@ export function histogram(frame: Frame, rows: Uint32Array, key: string): Bin[] {
     if (v > max) max = v;
   }
   if (min === max) return [{ x0: min, x1: max, count: vals.length }];
+  const fixed = bins && bins > 0 ? Math.floor(bins) : 0;
   const target = Math.min(30, Math.max(5, Math.ceil(Math.log2(vals.length) + 1)));
-  const step = niceStep(max - min, target);
-  const start = Math.floor(min / step) * step;
-  const n = Math.max(1, Math.ceil((max - start) / step + 1e-9));
-  const bins: Bin[] = Array.from({ length: n }, (_, i) => ({ x0: start + i * step, x1: start + (i + 1) * step, count: 0 }));
-  for (const v of vals) bins[Math.min(n - 1, Math.floor((v - start) / step))].count++;
-  return bins;
+  const step = fixed ? (max - min) / fixed : niceStep(max - min, target);
+  const start = fixed ? min : Math.floor(min / step) * step;
+  const n = fixed || Math.max(1, Math.ceil((max - start) / step + 1e-9));
+  const out: Bin[] = Array.from({ length: n }, (_, i) => ({ x0: start + i * step, x1: start + (i + 1) * step, count: 0 }));
+  for (const v of vals) out[Math.min(n - 1, Math.floor((v - start) / step))].count++;
+  return out;
 }
 
 /** Distinct values with their row counts, for filter pickers. */

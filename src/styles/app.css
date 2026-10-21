@@ -1256,3 +1256,42 @@
   min-width: 140px;
   width: auto;
 }
+
+/* ---------- Widget settings sections ---------- */
+.editor-sections {
+  display: grid;
+}
+.editor-section {
+  border-top: 1px solid var(--border);
+}
+.editor-section:first-child {
+  border-top: 0;
+}
+.editor-section > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.editor-section > summary::-webkit-details-marker {
+  display: none;
+}
+.editor-section > summary:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+.editor-section-caret {
+  color: var(--text-secondary);
+  transition: transform var(--dur) var(--ease);
+}
+.editor-section[open] .editor-section-caret {
+  transform: rotate(90deg);
+}
+.editor-section-body {
+  padding-bottom: var(--sp-3);
+}

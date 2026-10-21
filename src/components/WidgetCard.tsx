@@ -22,7 +22,10 @@ export function WidgetCard({ widget, frame, rows, filters, onToggleValue, onFix,
   return (
     <section ref={innerRef} className={`widget widget-${widget.kind} span-${widget.span} ${className}`} style={style} aria-label={title}>
       <header className="widget-head">
-        <h2 className="widget-title">{title}</h2>
+        <div className="widget-titles">
+          <h2 className="widget-title">{title}</h2>
+          {widget.subtitle?.trim() && <p className="widget-sub">{widget.subtitle}</p>}
+        </div>
         {actions}
       </header>
       <WidgetBody widget={widget} frame={frame} rows={rows} filters={filters} onToggleValue={onToggleValue} onFix={onFix} />

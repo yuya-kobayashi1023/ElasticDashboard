@@ -961,3 +961,37 @@ textarea {
   .series-line.s-6 { stroke-dasharray: 1 3; }
   .series-line.s-7 { stroke-dasharray: 6 2 1 2; }
 }
+
+/* ---------- KPI target ---------- */
+.kpi-target {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--sp-1);
+  font-size: 13px;
+}
+.kpi-target-text {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.kpi-target-text strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.kpi-target-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--grid);
+}
+.kpi-target-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+.widget-titles {
+  flex: 1;
+  min-width: 0;
+}
+.widget-titles .widget-sub {
+  margin: 2px 0 0;
+}

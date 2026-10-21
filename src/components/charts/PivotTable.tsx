@@ -8,10 +8,12 @@ interface Props {
   /** Totals are meaningful for additive measures only. */
   showTotals: boolean;
   color: string;
+  /** Shade cells by value; undefined = on. */
+  heatmap?: boolean;
 }
 
 /** Cross table with a single-hue sequential shade (darker = larger). Values stay in text, so color is never the only cue. */
-export function PivotTable({ data, rowLabel, colLabel, format, showTotals, color }: Props) {
+export function PivotTable({ data, rowLabel, colLabel, format, showTotals, color, heatmap = true }: Props) {
   let lo = Infinity;
   let hi = -Infinity;
   for (const row of data.cells) for (const v of row) {
@@ -20,7 +22,7 @@ export function PivotTable({ data, rowLabel, colLabel, format, showTotals, color
     if (v > hi) hi = v;
   }
   const shade = (v: number) => {
-    if (Number.isNaN(v) || hi === lo) return undefined;
+    if (!heatmap || Number.isNaN(v) || hi === lo) return undefined;
     const p = Math.round(6 + ((v - lo) / (hi - lo)) * 49);
     return `color-mix(in oklab, ${color} ${p}%, var(--surface))`;
   };

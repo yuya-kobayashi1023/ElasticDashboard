@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ScatterPoint } from "../../core/aggregate";
+import { linearRegression } from "../../core/stats";
 import { useChartFont } from "../ThemeScope";
 import { OTHER_COLOR, SERIES_COLORS, clampTooltip, linear, niceTicks, textWidth, useChartHeight, useWidth } from "./util";
 import { markerPath, SeriesSwatch } from "./Texture";
@@ -12,11 +13,18 @@ interface Props {
   xLabel: string;
   yLabel: string;
   color: string;
+  /** undefined = "m" */
+  pointSize?: "s" | "m" | "l";
+  /** Least-squares line with the correlation coefficient in the corner. */
+  trendLine?: boolean;
 }
+
+const RADIUS = { s: 3, m: 4, l: 6 };
 
 const M = { top: 22, right: 12, bottom: 40 };
 
-export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel, color }: Props) {
+export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel, color, pointSize = "m", trendLine }: Props) {
+  const clipId = useId();
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const auto = useChartHeight(0.32, 220, 420);
@@ -38,6 +46,7 @@ export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel,
   const plotH = height - M.top - M.bottom;
   const x = linear(xt[0], xt[xt.length - 1], left, left + innerW);
   const y = linear(yt[0], yt[yt.length - 1], M.top + plotH, M.top);
+  const reg = trendLine ? linearRegression(points.map((p) => p.x), points.map((p) => p.y)) : null;
   const colorOf = (g: number) => (groups.length === 0 ? color : g >= 3 ? OTHER_COLOR : SERIES_COLORS[g]);
   const labelEvery = Math.max(1, Math.ceil(xt.length / Math.max(2, Math.floor(innerW / 70))));
 
@@ -95,9 +104,31 @@ export function ScatterChart({ points, groups, formatX, formatY, xLabel, yLabel,
               {yLabel}
             </text>
             {points.map((p, i) => (
-              <path key={i} d={markerPath(x(p.x), y(p.y), 4, groups.length ? p.group : 0)} fill={colorOf(p.group)} fillOpacity={0.75} stroke="var(--surface)" strokeWidth={1} />
+              <path key={i} d={markerPath(x(p.x), y(p.y), RADIUS[pointSize], groups.length ? p.group : 0)} fill={colorOf(p.group)} fillOpacity={0.75} stroke="var(--surface)" strokeWidth={1} />
             ))}
-            {hp && <path d={markerPath(x(hp.x), y(hp.y), 6, groups.length ? hp.group : 0)} fill={colorOf(hp.group)} stroke="var(--surface)" strokeWidth={2} pointerEvents="none" />}
+            {reg && (
+              <>
+                <clipPath id={clipId}>
+                  <rect x={left} y={M.top} width={innerW} height={plotH} />
+                </clipPath>
+                <line
+                  clipPath={`url(#${clipId})`}
+                  x1={x(x0)}
+                  x2={x(x1)}
+                  y1={y(reg.slope * x0 + reg.intercept)}
+                  y2={y(reg.slope * x1 + reg.intercept)}
+                  stroke="var(--text-primary)"
+                  strokeWidth={1.5}
+                  strokeDasharray="6 4"
+                  opacity={0.7}
+                  pointerEvents="none"
+                />
+                <text className="value-label" x={left + innerW - 4} y={M.top + 12} textAnchor="end">
+                  相関係数 r = {reg.r.toFixed(2)}
+                </text>
+              </>
+            )}
+            {hp && <path d={markerPath(x(hp.x), y(hp.y), RADIUS[pointSize] + 2, groups.length ? hp.group : 0)} fill={colorOf(hp.group)} stroke="var(--surface)" strokeWidth={2} pointerEvents="none" />}
           </svg>
         )}
         {hp && (

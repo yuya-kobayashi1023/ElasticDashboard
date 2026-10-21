@@ -18,12 +18,19 @@ interface Props {
   color?: string;
   /** Value-axis title (measure and unit), drawn above the plot. */
   yTitle?: string;
+  /** Moving average drawn as a dashed line (single series only). */
+  trend?: { label: string; values: number[] };
+  showPoints?: boolean;
+  /** Lines start the value axis at 0; undefined = true. Columns always do. */
+  yFromZero?: boolean;
+  /** Label the last value of a single series; undefined = shown. */
+  showValues?: boolean;
 }
 
 const M = { top: 10, right: 14, bottom: 28 };
 
 
-export function TimeChart({ data, mark, stackable, format, formatAxis, height: fixedHeight, color, yTitle }: Props) {
+export function TimeChart({ data, mark, stackable, format, formatAxis, height: fixedHeight, color, yTitle, trend, showPoints, yFromZero, showValues = true }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const fs = useChartFont();
   const autoHeight = useChartHeight(0.32, 200, 440);
@@ -38,8 +45,14 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
   const useColumns = mark === "column" && (stackable || series.length === 1);
 
   // Value domain
-  let lo = 0;
-  let hi = 0;
+  const fromZero = yFromZero !== false || useColumns;
+  let lo = fromZero ? 0 : Infinity;
+  let hi = fromZero ? 0 : -Infinity;
+  for (const v of trend?.values ?? []) {
+    if (Number.isNaN(v)) continue;
+    hi = Math.max(hi, v);
+    lo = Math.min(lo, v);
+  }
   for (let b = 0; b < n; b++) {
     if (stacked) {
       let pos = 0;
@@ -61,13 +74,15 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
       }
     }
   }
+  if (lo === Infinity) lo = hi = 0;
   const ticks = niceTicks(lo, hi, 5);
   const yMin = ticks[0];
   const yMax = ticks[ticks.length - 1];
   const left = Math.max(...ticks.map((t) => textWidth(formatAxis(t), fs))) + 12;
   const single = series.length === 1 && !useColumns;
-  const endLabel = single && n > 0 ? format(series[0].values[n - 1]) : "";
-  const right = M.right + (single ? textWidth(endLabel, fs) + 8 : 0);
+  const showEnd = single && showValues;
+  const endLabel = showEnd && n > 0 ? format(series[0].values[n - 1]) : "";
+  const right = M.right + (showEnd ? textWidth(endLabel, fs) + 8 : 0);
   const innerW = Math.max(10, width - left - right);
   const top = M.top + (yTitle ? 16 : 0);
   const plotH = height - top - M.bottom;
@@ -119,6 +134,22 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
               {s.label}
             </span>
           ))}
+        </div>
+      )}
+      {trend && series.length === 1 && (
+        <div className="legend" role="list" aria-label="凡例">
+          <span className="legend-item" role="listitem">
+            <svg width={16} height={8} aria-hidden>
+              <line x1={0} x2={16} y1={4} y2={4} stroke={seriesColor(series[0].label, 0)} strokeWidth={2} />
+            </svg>
+            {series[0].label === "" ? "実績" : series[0].label}
+          </span>
+          <span className="legend-item" role="listitem">
+            <svg width={16} height={8} aria-hidden>
+              <line x1={0} x2={16} y1={4} y2={4} stroke={seriesColor(series[0].label, 0)} strokeWidth={1.5} strokeDasharray="4 3" />
+            </svg>
+            {trend.label}
+          </span>
         </div>
       )}
       <div ref={ref} style={{ position: "relative" }} onMouseLeave={() => setHover(null)}>
@@ -226,12 +257,32 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
                 </g>
               ))}
 
+            {trend && (
+              <path
+                d={linePath(trend.values)}
+                fill="none"
+                stroke={seriesColor(series[0].label, 0)}
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
+                strokeLinecap="round"
+                opacity={0.85}
+              />
+            )}
+
+            {showPoints &&
+              !useColumns &&
+              series.map((s, si) =>
+                s.values.map((v, i) =>
+                  Number.isNaN(v) ? null : <circle key={`${s.label}-${i}`} cx={xCenter(i)} cy={y(v)} r={3} fill={seriesColor(s.label, si)} stroke="var(--surface)" strokeWidth={1.5} />,
+                ),
+              )}
+
             {single && n > 0 && !Number.isNaN(series[0].values[n - 1]) && (
               <g>
                 <circle cx={xCenter(n - 1)} cy={y(series[0].values[n - 1])} r={4} fill={seriesColor(series[0].label, 0)} stroke="var(--surface)" strokeWidth={2} />
-                <text className="value-label" x={xCenter(n - 1) + 8} y={y(series[0].values[n - 1])} dy="0.35em">
+                {showEnd && <text className="value-label" x={xCenter(n - 1) + 8} y={y(series[0].values[n - 1])} dy="0.35em">
                   {endLabel}
-                </text>
+                </text>}
               </g>
             )}
 
@@ -261,6 +312,12 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
                   <span className="tt-value">{format(r.value)}</span>
                 </div>
               ))}
+            {trend && hover !== null && !Number.isNaN(trend.values[hover]) && (
+              <div className="tt-row">
+                <span className="tt-label">{trend.label}</span>
+                <span className="tt-value">{format(trend.values[hover])}</span>
+              </div>
+            )}
             {stacked && hoverRows.length > 1 && (
               <div className="tt-row" style={{ borderTop: "1px solid var(--border)", marginTop: 2, paddingTop: 2 }}>
                 <span className="tt-label">合計</span>
