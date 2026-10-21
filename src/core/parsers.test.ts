@@ -3,6 +3,7 @@ import { aggregate, filterRows, groupBy } from "./aggregate";
 import { aggsFor, isContinuousType, isDimensionType, isMeasureColumnType } from "./columnTypes";
 import { formatDuration, formatMeasure, formatTimeOfDay, formatValue, measureAxisTitle } from "./format";
 import { buildFrame, columnStats } from "./frame";
+import { previewParse } from "./previewParse";
 import { converterFor, parseBoolean, parseDateWith, parseDuration, parseNumberWith, parseTimeOfDay, textNormalizerFor } from "./parsers";
 import type { ColumnMeta, ColumnType, RawTable } from "./types";
 
@@ -252,5 +253,24 @@ describe("frame and aggregation with new types", () => {
     expect([...out]).toEqual([0, 2]);
     const range = filterRows(frame, [{ id: "r", column: "stay", kind: "range", min: 3600, max: null }]);
     expect([...range]).toEqual([0, 2, 4]);
+  });
+});
+
+describe("previewParse", () => {
+  const table: RawTable = { headers: ["a"], rows: [["1.234,5"], ["2,5"], ["abc"], [null], ["1.234,5"]] };
+  it("previews conversions and counts failures", () => {
+    const p = previewParse(table, 0, meta("a", "number", { decimalComma: true }));
+    expect(p.checked).toBe(4);
+    expect(p.invalid).toBe(1);
+    expect(p.samples.map((s) => s.raw)).toEqual(["1.234,5", "2,5", "abc"]);
+    expect(p.samples[0].shown).toBe("1,234.5");
+    expect(p.samples[2].ok).toBe(false);
+  });
+  it("normalizes text and limits the sampled rows", () => {
+    const t: RawTable = { headers: ["a"], rows: [["ＡＢＣ"], [" x "]] };
+    expect(previewParse(t, 0, meta("a", "category", { widthNormalize: true, letterCase: "lower" })).samples.map((s) => s.shown)).toEqual(["abc", "x"]);
+    const big: RawTable = { headers: ["a"], rows: Array.from({ length: 300000 }, (_, i) => [String(i)]) };
+    expect(previewParse(big, 0, meta("a", "number"), 2000).checked).toBe(2000);
+    expect(previewParse(big, 5, meta("a", "number")).checked).toBe(0);
   });
 });

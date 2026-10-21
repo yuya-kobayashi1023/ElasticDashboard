@@ -1186,3 +1186,27 @@
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--sp-2);
 }
+.parse-preview {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-radius: var(--radius-card);
+  background: var(--bg-subtle);
+}
+.parse-preview ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.parse-preview li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+.parse-raw {
+  color: var(--text-secondary);
+}

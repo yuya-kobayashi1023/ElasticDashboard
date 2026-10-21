@@ -230,8 +230,8 @@ export function parseDuration(v: RawCell, p?: ColumnParse): number {
 
 // ---------- Boolean ----------
 
-const TRUE_WORDS = new Set(["true", "yes", "y", "t", "1", "on", "はい", "有", "有り", "あり", "済", "○", "◯", "✓", "✔", "〇", "真"]);
-const FALSE_WORDS = new Set(["false", "no", "n", "f", "0", "off", "いいえ", "無", "無し", "なし", "未", "×", "✗", "✘", "偽"]);
+export const TRUE_WORDS = new Set(["true", "yes", "y", "t", "1", "on", "はい", "有", "有り", "あり", "済", "○", "◯", "✓", "✔", "〇", "真"]);
+export const FALSE_WORDS = new Set(["false", "no", "n", "f", "0", "off", "いいえ", "無", "無し", "なし", "未", "×", "✗", "✘", "偽"]);
 const boolKey = (s: string) => s.normalize("NFKC").trim().toLowerCase();
 
 /** 1 / 0 for recognised spellings of yes / no, NaN otherwise. */
