@@ -40,7 +40,20 @@ export function usedColumns(d: Dashboard): Set<string> {
         used.add(w.cols);
         if (w.measure.column) used.add(w.measure.column);
         break;
+      case "donut":
+        used.add(w.dimension);
+        if (w.measure.column) used.add(w.measure.column);
+        break;
+      case "heatmap":
+        used.add(w.x.column);
+        used.add(w.y.column);
+        if (w.measure.column) used.add(w.measure.column);
+        break;
+      case "gauge":
+        if (w.measure.column) used.add(w.measure.column);
+        break;
       case "table":
+      case "note":
         break;
     }
   }

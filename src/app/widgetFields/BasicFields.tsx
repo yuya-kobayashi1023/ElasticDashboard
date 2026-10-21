@@ -1,4 +1,4 @@
-import { ChartBarHorizontalIcon, ChartBarIcon, ChartLineIcon, ChartScatterIcon, GaugeIcon, GridNineIcon, TableIcon } from "@phosphor-icons/react";
+import { ChartBarHorizontalIcon, ChartBarIcon, ChartDonutIcon, ChartLineIcon, ChartScatterIcon, GaugeIcon, GridFourIcon, GridNineIcon, NoteIcon, SpeedometerIcon, TableIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { widgetTitle } from "../../core/format";
 import type { ColumnMeta, Span, Widget, WidgetKind } from "../../core/types";
@@ -12,6 +12,10 @@ const KINDS: { kind: WidgetKind; label: string; icon: ReactNode }[] = [
   { kind: "scatter", label: "散布図", icon: <ChartScatterIcon size={18} aria-hidden /> },
   { kind: "pivot", label: "クロス集計", icon: <GridNineIcon size={18} aria-hidden /> },
   { kind: "table", label: "表", icon: <TableIcon size={18} aria-hidden /> },
+  { kind: "donut", label: "ドーナツ", icon: <ChartDonutIcon size={18} aria-hidden /> },
+  { kind: "heatmap", label: "ヒートマップ", icon: <GridFourIcon size={18} aria-hidden /> },
+  { kind: "gauge", label: "ゲージ", icon: <SpeedometerIcon size={18} aria-hidden /> },
+  { kind: "note", label: "メモ", icon: <NoteIcon size={18} aria-hidden /> },
 ];
 
 const SPANS: { span: Span; label: string }[] = [

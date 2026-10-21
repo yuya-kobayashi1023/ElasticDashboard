@@ -1,6 +1,7 @@
 import { aggsFor, isContinuousType, isFloatColumn } from "./columnTypes";
+import { datePart, datePartOrder } from "./derive";
 import { isFilterActive, presetRange } from "./filters";
-import type { Agg, BarSort, Filter, Frame, Measure, TimeBucket } from "./types";
+import type { Agg, BarSort, Filter, Frame, HeatAxis, Measure, TimeBucket } from "./types";
 
 export const BLANK_LABEL = "(空欄)";
 export const OTHER_LABEL = "その他";
@@ -588,4 +589,97 @@ export function timeSeriesColumns(
     result.series.push({ label: label(key), values: r.series[0].values });
   }
   return result;
+}
+
+// ---------- Donut ----------
+
+export interface DonutSlice {
+  label: string;
+  value: number;
+  isOther: boolean;
+}
+
+/** Largest groups first; the rest is folded into one "その他" slice. Zero, negative and blank values cannot be drawn and are skipped. */
+export function donutSlices(frame: Frame, rows: Uint32Array, key: string, measure: Measure, limit: number): { slices: DonutSlice[]; total: number } {
+  const { bars } = groupBy(frame, rows, key, measure, limit, "value-desc");
+  const slices = bars.filter((b) => b.value > 0).map((b) => ({ label: b.label, value: b.value, isOther: b.isOther }));
+  return { slices, total: slices.reduce((a, s) => a + s.value, 0) };
+}
+
+// ---------- Heatmap ----------
+
+export interface HeatmapResult {
+  xLabels: string[];
+  yLabels: string[];
+  /** cells[y][x]; null = no rows (or no value) there. */
+  cells: (number | null)[][];
+  min: number;
+  max: number;
+}
+
+const MAX_HEAT_LABELS = 30;
+
+/** Label of each row on a heatmap axis, plus the natural order when there is one. */
+function axisLabels(frame: Frame, axis: HeatAxis): { get: (i: number) => string | null; order?: string[] } | null {
+  const col = frame.columns.get(axis.column);
+  if (!col) return null;
+  if (axis.unit) {
+    if (!isFloatColumn(col)) return null;
+    const v = col.values;
+    if (col.type === "time") {
+      if (axis.unit !== "hour") return null;
+      return { get: (i) => datePart(v[i] * 1000, "hour"), order: datePartOrder("hour") };
+    }
+    if (col.type !== "date") return null;
+    return { get: (i) => datePart(v[i], axis.unit!), order: datePartOrder(axis.unit) };
+  }
+  const get = labelGetter(frame, axis.column);
+  return { get, order: frame.meta.get(axis.column)?.order };
+}
+
+/** Two-way grid of a measure. Axes keep only values that occur; unit axes follow calendar order, categories their column order or name. */
+export function heatmapGrid(frame: Frame, rows: Uint32Array, x: HeatAxis, y: HeatAxis, measure: Measure): HeatmapResult {
+  const empty: HeatmapResult = { xLabels: [], yLabels: [], cells: [], min: 0, max: 0 };
+  const xl = axisLabels(frame, x);
+  const yl = axisLabels(frame, y);
+  if (!xl || !yl) return empty;
+  const feed = feeder(frame, measure);
+  const cellAcc = new Map<string, Acc>();
+  const xCount = new Map<string, number>();
+  const yCount = new Map<string, number>();
+  for (const i of rows) {
+    const a = xl.get(i);
+    const b = yl.get(i);
+    if (a === null || b === null) continue;
+    xCount.set(a, (xCount.get(a) ?? 0) + 1);
+    yCount.set(b, (yCount.get(b) ?? 0) + 1);
+    const k = `${a}\u0000${b}`;
+    let acc = cellAcc.get(k);
+    if (!acc) cellAcc.set(k, (acc = newAcc(measure.agg)));
+    feed(acc, i);
+  }
+  const arrange = (counts: Map<string, number>, order?: string[]) => {
+    let keys = [...counts.keys()];
+    // Many distinct values: keep the most frequent ones.
+    if (keys.length > MAX_HEAT_LABELS) keys = keys.sort((p, q) => counts.get(q)! - counts.get(p)!).slice(0, MAX_HEAT_LABELS);
+    const rank = order ? new Map(order.map((v, i) => [v, i])) : null;
+    return keys.sort((p, q) => (rank ? (rank.get(p) ?? 1e9) - (rank.get(q) ?? 1e9) : 0) || collator.compare(p, q));
+  };
+  const xLabels = arrange(xCount, xl.order);
+  const yLabels = arrange(yCount, yl.order);
+  let min = Infinity;
+  let max = -Infinity;
+  const cells = yLabels.map((b) =>
+    xLabels.map((a) => {
+      const acc = cellAcc.get(`${a}\u0000${b}`);
+      if (!acc) return null;
+      const v = finish(acc, measure.agg);
+      if (Number.isNaN(v)) return null;
+      if (v < min) min = v;
+      if (v > max) max = v;
+      return v;
+    }),
+  );
+  if (min === Infinity) return { ...empty, xLabels, yLabels, cells };
+  return { xLabels, yLabels, cells, min, max };
 }

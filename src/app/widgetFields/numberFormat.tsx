@@ -1,9 +1,9 @@
 import type { WidgetNumberFormat, Widget } from "../../core/types";
 import type { SetWidget } from "./shared";
 
-/** Kinds whose values are numbers on screen (a table follows the column settings). */
+/** Kinds whose values are numbers on screen (a table follows the column settings, a note has none). */
 export function hasNumberFormat(w: Widget): boolean {
-  return w.kind !== "table";
+  return w.kind !== "table" && w.kind !== "note";
 }
 
 const STYLES: { value: NonNullable<WidgetNumberFormat["style"]>; label: string }[] = [

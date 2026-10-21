@@ -5,7 +5,7 @@ import type { SetWidget } from "./shared";
 
 /** Widgets drawn in a single color (multi-series charts take colors from the palette order). */
 export function usesColor(w: Widget): boolean {
-  if (w.kind === "bar" || w.kind === "histogram" || w.kind === "pivot") return true;
+  if (w.kind === "bar" || w.kind === "histogram" || w.kind === "pivot" || w.kind === "heatmap" || w.kind === "gauge") return true;
   if (w.kind === "time") return !w.split && !w.series?.length;
   if (w.kind === "scatter") return !w.colorBy;
   if (w.kind === "kpi") return !!w.compare;

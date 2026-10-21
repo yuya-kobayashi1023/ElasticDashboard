@@ -1,11 +1,15 @@
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
-import { aggregate, comparePeriods, filterRows, groupBy, histogram, measureIsValid, pivot, scatterPoints, timeSeries, timeSeriesColumns } from "../core/aggregate";
+import { aggregate, comparePeriods, donutSlices, filterRows, groupBy, heatmapGrid, histogram, measureIsValid, pivot, scatterPoints, timeSeries, timeSeriesColumns } from "../core/aggregate";
 import { isContinuousType, isDimensionType } from "../core/columnTypes";
-import { columnAxisTitle, columnLabel, formatMeasure, formatValue, measureAxisTitle } from "../core/format";
-import type { Filter, Frame, Widget } from "../core/types";
+import { columnAxisTitle, columnLabel, formatMeasure, formatValue, HEAT_UNIT_LABEL, measureAxisTitle } from "../core/format";
+import type { Filter, Frame, HeatAxis, Widget } from "../core/types";
 import { BarChart } from "./charts/BarChart";
+import { DonutChart } from "./charts/DonutChart";
+import { GaugeChart } from "./charts/GaugeChart";
+import { HeatmapChart } from "./charts/HeatmapChart";
 import { Histogram } from "./charts/Histogram";
+import { NoteBlock } from "./charts/NoteBlock";
 import { KpiCompare } from "./charts/KpiCompare";
 import { KpiTarget } from "./charts/KpiTarget";
 import { PivotTable } from "./charts/PivotTable";
@@ -76,7 +80,29 @@ export function widgetProblem(w: Widget, frame: Frame): string | null {
       if (!isCategory(w.rows) || !isCategory(w.cols)) return "行と列には分類（カテゴリ）の列を選んでください";
       return missing(w.measure.column) ?? (measureIsValid(frame, w.measure) ? null : badMeasure);
     case "table":
+    case "note":
       return null;
+    case "donut":
+      if (!w.dimension) return "分類に使う列を選んでください";
+      if (missing(w.dimension)) return missing(w.dimension);
+      if (!isCategory(w.dimension)) return "分類には分類（カテゴリ）の列を選んでください";
+      if (w.measure.agg !== "count" && w.measure.agg !== "sum") return "ドーナツグラフの集計方法は合計か件数にしてください";
+      return missing(w.measure.column) ?? (measureIsValid(frame, w.measure) ? null : badMeasure);
+    case "heatmap": {
+      const axisProblem = (a: HeatAxis, name: string) => {
+        if (!a.column) return `${name}に使う列を選んでください`;
+        if (missing(a.column)) return missing(a.column);
+        const type = frame.columns.get(a.column)!.type;
+        if (!a.unit) return isCategory(a.column) ? null : `${name}には分類の列か、日付・時刻の単位を選んでください`;
+        if (type === "date") return null;
+        return type === "time" && a.unit === "hour" ? null : `${name}の単位が列の種類に合っていません`;
+      };
+      return axisProblem(w.x, "横軸") ?? axisProblem(w.y, "縦軸") ?? missing(w.measure.column) ?? (measureIsValid(frame, w.measure) ? null : badMeasure);
+    }
+    case "gauge":
+      if (!Number.isFinite(w.target)) return "目標値を入力してください";
+      if (w.target <= (w.min ?? 0)) return "目標値は最小値より大きくしてください";
+      return missing(w.measure.column) ?? (measureIsValid(frame, w.measure) ? null : badMeasure);
   }
 }
 
@@ -201,6 +227,33 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
           />
         );
       }
+      case "donut": {
+        // Like the bar chart, ignore the filter on its own dimension so other slices stay selectable.
+        const filter = filters.find((f) => f.column === w.dimension && f.kind === "values");
+        const own = filter && filter.kind === "values" && filter.values.length > 0 ? filterRows(frame, filters, filter.id) : rows;
+        const { slices, total } = donutSlices(frame, own, w.dimension, w.measure, w.limit);
+        if (slices.length === 0) return <Empty />;
+        return (
+          <DonutChart
+            slices={slices}
+            total={total}
+            format={fmt(w.measure)}
+            showPercent={w.showPercent !== false}
+            selected={filter && filter.kind === "values" ? filter.values : []}
+            onToggle={onToggleValue && frame.columns.get(w.dimension)?.type !== "number" ? (label) => onToggleValue(w.dimension, label) : undefined}
+          />
+        );
+      }
+      case "heatmap": {
+        const data = heatmapGrid(frame, rows, w.x, w.y, w.measure);
+        if (data.xLabels.length === 0 || data.yLabels.length === 0 || data.cells.every((r) => r.every((v) => v === null))) return <Empty />;
+        const axisName = (a: HeatAxis) => (a.unit ? HEAT_UNIT_LABEL[a.unit] : columnLabel(frame.meta, a.column));
+        return <HeatmapChart data={data} format={fmt(w.measure)} xName={axisName(w.x)} yName={axisName(w.y)} color={color} valueTitle={titles ? measureAxisTitle(w.measure, frame.meta) : undefined} />;
+      }
+      case "note":
+        return <NoteBlock text={w.text} />;
+      case "gauge":
+        return <GaugeChart value={aggregate(frame, rows, w.measure)} target={w.target} min={w.min ?? 0} format={fmt(w.measure)} color={color} />;
       case "table": {
         const avail = [...frame.meta.values()].filter((c) => !c.hidden && frame.columns.has(c.key)).map((c) => c.key);
         const shown = w.columns ? new Set(w.columns) : null;

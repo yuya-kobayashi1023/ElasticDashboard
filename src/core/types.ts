@@ -238,7 +238,59 @@ export interface TableWidget extends WidgetBase {
   wrap?: boolean;
 }
 
-export type Widget = KpiWidget | BarWidget | TimeWidget | HistogramWidget | ScatterWidget | PivotWidget | TableWidget;
+export interface DonutWidget extends WidgetBase {
+  kind: "donut";
+  dimension: string;
+  /** Additive only: count or sum. */
+  measure: Measure;
+  /** Slices shown (3-10); the rest is folded into "その他". */
+  limit: number;
+  /** Percent next to each slice; undefined = shown. */
+  showPercent?: boolean;
+}
+
+/** Part of a date or time that a heatmap axis groups by. */
+export type HeatUnit = "weekday" | "hour" | "month" | "day";
+
+/** A heatmap axis: a category / boolean column as is, or a unit of a date / time column. */
+export interface HeatAxis {
+  column: string;
+  unit?: HeatUnit;
+}
+
+export interface HeatmapWidget extends WidgetBase {
+  kind: "heatmap";
+  x: HeatAxis;
+  y: HeatAxis;
+  measure: Measure;
+}
+
+export interface NoteWidget extends WidgetBase {
+  kind: "note";
+  /** Minimal markdown: "# " / "## " headings, "- " bullets, **bold**. */
+  text: string;
+}
+
+export interface GaugeWidget extends WidgetBase {
+  kind: "gauge";
+  measure: Measure;
+  target: number;
+  /** Value at the left end of the gauge; undefined = 0. */
+  min?: number;
+}
+
+export type Widget =
+  | KpiWidget
+  | BarWidget
+  | TimeWidget
+  | HistogramWidget
+  | ScatterWidget
+  | PivotWidget
+  | TableWidget
+  | DonutWidget
+  | HeatmapWidget
+  | NoteWidget
+  | GaugeWidget;
 export type WidgetKind = Widget["kind"];
 
 export type Filter =

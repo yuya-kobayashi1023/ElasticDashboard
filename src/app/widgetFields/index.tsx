@@ -1,6 +1,10 @@
 import { BarData, BarDisplay } from "./bar";
+import { DonutData, DonutDisplay } from "./donut";
+import { GaugeData, GaugeDisplay } from "./gauge";
+import { HeatmapData, HeatmapDisplay } from "./heatmap";
 import { HistogramData, HistogramDisplay } from "./histogram";
 import { KpiData, KpiDisplay } from "./kpi";
+import { NoteData } from "./note";
 import { PivotData, PivotDisplay } from "./pivot";
 import { ScatterData, ScatterDisplay } from "./scatter";
 import type { FieldProps } from "./shared";
@@ -29,6 +33,14 @@ export function DataFields({ widget, ...rest }: FieldProps) {
       return <PivotData widget={widget} {...rest} />;
     case "table":
       return <TableData widget={widget} {...rest} />;
+    case "donut":
+      return <DonutData widget={widget} {...rest} />;
+    case "heatmap":
+      return <HeatmapData widget={widget} {...rest} />;
+    case "gauge":
+      return <GaugeData widget={widget} {...rest} />;
+    case "note":
+      return <NoteData widget={widget} {...rest} />;
   }
 }
 
@@ -49,5 +61,13 @@ export function DisplayFields({ widget, ...rest }: FieldProps) {
       return <PivotDisplay widget={widget} {...rest} />;
     case "table":
       return <TableDisplay widget={widget} {...rest} />;
+    case "donut":
+      return <DonutDisplay widget={widget} {...rest} />;
+    case "heatmap":
+      return <HeatmapDisplay widget={widget} {...rest} />;
+    case "gauge":
+      return <GaugeDisplay widget={widget} {...rest} />;
+    case "note":
+      return null;
   }
 }

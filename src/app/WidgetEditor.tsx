@@ -25,7 +25,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
 
   const changeKind = (kind: WidgetKind) => {
     if (!widget || widget.kind === kind || !dashboard) return;
-    const next = { ...defaultWidget(kind, dashboard.columns, frame, widget.id), title: widget.title, ...(widget.subtitle ? { subtitle: widget.subtitle } : {}), ...(widget.numberFormat && kind !== "table" ? { numberFormat: widget.numberFormat } : {}) };
+    const next = { ...defaultWidget(kind, dashboard.columns, frame, widget.id), title: widget.title, ...(widget.subtitle ? { subtitle: widget.subtitle } : {}), ...(widget.numberFormat && kind !== "table" && kind !== "note" ? { numberFormat: widget.numberFormat } : {}) };
     update((d) => ({ ...d, widgets: d.widgets.map((w) => (w.id === widget.id ? next : w)) }));
   };
 
@@ -60,12 +60,14 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
           <Section name="basic" title="基本" defaultOpen>
             <BasicFields widget={widget} columns={dashboard.columns} set={set} onChangeKind={changeKind} />
           </Section>
-          <Section name="data" title="データ" defaultOpen>
+          <Section name="data" title={widget.kind === "note" ? "本文" : "データ"} defaultOpen>
             <DataFields widget={widget} columns={columns} frame={frame} set={set} />
           </Section>
-          <Section name="display" title="表示">
-            <DisplayFields widget={widget} columns={columns} frame={frame} set={set} />
-          </Section>
+          {widget.kind !== "note" && (
+            <Section name="display" title="表示">
+              <DisplayFields widget={widget} columns={columns} frame={frame} set={set} />
+            </Section>
+          )}
           {hasNumberFormat(widget) && (
             <Section name="format" title="数値の書式">
               <NumberFormatFields widget={widget} set={set} />

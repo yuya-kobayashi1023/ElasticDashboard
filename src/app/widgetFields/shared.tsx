@@ -37,7 +37,7 @@ export function ColumnSelect({ label, value, columns, onChange }: { label: strin
 
 const COLUMN_AGGS: Agg[] = ["sum", "avg", "min", "max", "distinct"];
 
-export function MeasureFields({ measure, columns, onChange }: { measure: Measure; columns: ColumnMeta[]; onChange: (m: Measure) => void }) {
+export function MeasureFields({ measure, columns, onChange, aggs }: { measure: Measure; columns: ColumnMeta[]; onChange: (m: Measure) => void; /** Allowed aggregations; the others are shown disabled. Undefined = all. */ aggs?: Agg[] }) {
   // Columns a given aggregation makes sense for (a sum needs numbers, a distinct count takes anything).
   const poolFor = (agg: Agg) => columns.filter((c) => aggsFor(c.type).includes(agg));
   const candidates = poolFor(measure.agg);
@@ -52,13 +52,16 @@ export function MeasureFields({ measure, columns, onChange }: { measure: Measure
       <label className="field">
         <span className="field-label">集計方法</span>
         <select className="select" value={measure.agg} onChange={(e) => setAgg(e.target.value as Agg)}>
-          <option value="count">{AGG_LABEL.count}（行数）</option>
+          <option value="count" disabled={!!aggs && !aggs.includes("count")}>
+            {AGG_LABEL.count}（行数）
+          </option>
           {COLUMN_AGGS.map((a) => (
-            <option key={a} value={a} disabled={poolFor(a).length === 0}>
+            <option key={a} value={a} disabled={poolFor(a).length === 0 || (!!aggs && !aggs.includes(a))}>
               {AGG_LABEL[a]}
             </option>
           ))}
         </select>
+        {aggs && <span className="field-hint">この表示では{aggs.map((a) => AGG_LABEL[a]).join("と")}のみ選べます（合算できない集計は割合が成り立たないため）</span>}
       </label>
       {measure.agg !== "count" && <ColumnSelect label="集計する列" value={measure.column ?? ""} columns={candidates} onChange={(column) => onChange({ ...measure, column })} />}
     </div>

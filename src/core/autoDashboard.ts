@@ -1,3 +1,4 @@
+import { columnHasTime } from "./aggregate";
 import { buildFrame } from "./frame";
 import { isContinuousType, isDimensionType, isFloatType } from "./columnTypes";
 import { cellToString, inferColumns, prefersAverage } from "./infer";
@@ -132,6 +133,11 @@ export function autoFilters(columns: ColumnMeta[], frame: Frame): Filter[] {
   return filters;
 }
 
+/** Count and sum add up across slices; anything else becomes a row count. */
+function additiveMeasure(m: Measure): Measure {
+  return m.agg === "sum" || m.agg === "count" ? m : { agg: "count", column: null };
+}
+
 export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Frame, id = newId()): Widget {
   const { measures, dimensions, dates } = columnRoles(columns, frame);
   const visible = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
@@ -162,6 +168,20 @@ export function defaultWidget(kind: WidgetKind, columns: ColumnMeta[], frame: Fr
       };
     case "table":
       return { id, kind, title: "", span: 4, columns: null, pageSize: 20 };
+    case "donut":
+      return { id, kind, title: "", span: 2, dimension: anyDim?.key ?? visible[0]?.key ?? "", measure: additiveMeasure(primary), limit: 6 };
+    case "heatmap": {
+      // Typical case: weekday × hour of a timestamp; otherwise a date's months against a category, or two categories.
+      const stamp = dates.find((c) => columnHasTime(frame, c.key));
+      if (stamp) return { id, kind, title: "", span: 4, x: { column: stamp.key, unit: "hour" }, y: { column: stamp.key, unit: "weekday" }, measure: primary };
+      const dim = anyDim?.key ?? "";
+      if (dates[0]) return { id, kind, title: "", span: 4, x: { column: dates[0].key, unit: "month" }, y: dim ? { column: dim } : { column: dates[0].key, unit: "weekday" }, measure: primary };
+      return { id, kind, title: "", span: 4, x: { column: dimensions[0]?.key ?? dim }, y: { column: dimensions[1]?.key ?? dimensions[0]?.key ?? dim }, measure: primary };
+    }
+    case "note":
+      return { id, kind, title: "", span: 4, text: "# 見出し\n\n- ここにメモを書きます" };
+    case "gauge":
+      return { id, kind, title: "", span: 1, measure: primary, target: 100 };
   }
 }
 

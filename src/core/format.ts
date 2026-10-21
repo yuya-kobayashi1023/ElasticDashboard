@@ -1,5 +1,5 @@
 import type { ResolvedBucket } from "./aggregate";
-import type { Agg, ColumnMeta, ColumnType, Measure, NumberStyle, Widget, WidgetNumberFormat } from "./types";
+import type { Agg, ColumnMeta, ColumnType, HeatAxis, HeatUnit, Measure, NumberStyle, Widget, WidgetNumberFormat } from "./types";
 
 export const AGG_LABEL: Record<Agg, string> = {
   count: "件数",
@@ -289,6 +289,8 @@ function byLabel(label: string): string {
   return label.endsWith("別") ? `${label}ごとの` : `${label}別の`;
 }
 
+export const HEAT_UNIT_LABEL: Record<HeatUnit, string> = { weekday: "曜日", hour: "時", month: "月", day: "日" };
+
 export function widgetTitle(w: Widget, meta: Map<string, ColumnMeta> | ColumnMeta[]): string {
   if (w.title.trim()) return w.title;
   switch (w.kind) {
@@ -312,5 +314,15 @@ export function widgetTitle(w: Widget, meta: Map<string, ColumnMeta> | ColumnMet
       return `${columnLabel(meta, w.rows)} × ${columnLabel(meta, w.cols)}の${measureLabel(w.measure, meta)}`;
     case "table":
       return "データ一覧";
+    case "donut":
+      return `${byLabel(columnLabel(meta, w.dimension))}${measureLabel(w.measure, meta)}の構成`;
+    case "heatmap": {
+      const axis = (a: HeatAxis) => (a.unit ? `${columnLabel(meta, a.column)}の${HEAT_UNIT_LABEL[a.unit]}` : columnLabel(meta, a.column));
+      return `${axis(w.y)} × ${axis(w.x)}の${measureLabel(w.measure, meta)}`;
+    }
+    case "note":
+      return "メモ";
+    case "gauge":
+      return `${measureLabel(w.measure, meta)}の達成度`;
   }
 }
