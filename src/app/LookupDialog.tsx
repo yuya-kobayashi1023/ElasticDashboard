@@ -130,6 +130,8 @@ export function LookupDialog({ open, raw, editing, frame: shared, onClose }: Pro
         label: labels.has(h) ? `${h}（マスタ）` : h,
         type: inferred.type,
         inferredType: inferred.type,
+        ...(inferred.parse ? { parse: inferred.parse, inferredParse: inferred.parse } : {}),
+        inferredReason: inferred.reason,
         hidden: false,
         idLike: inferred.idLike,
         format: inferred.format,

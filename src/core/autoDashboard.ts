@@ -25,13 +25,17 @@ export interface ColumnRoles {
   measures: ColumnMeta[];
   dimensions: ColumnMeta[];
   dates: ColumnMeta[];
+  booleans: ColumnMeta[];
 }
+
+/** Lengths of time are measurements: averaged by default, like ratios and prices. */
+const averaged = (c: ColumnMeta) => c.type === "duration" || prefersAverage(c);
 
 export function columnRoles(columns: ColumnMeta[], frame: Frame): ColumnRoles {
   const usable = columns.filter((c) => !c.hidden && frame.columns.has(c.key));
   // A column with a single value (an export timestamp, a fixed flag) carries no information.
   const measures = usable
-    .filter((c) => c.type === "number" && !c.idLike && distinctCount(frame, c.key) >= 2)
+    .filter((c) => (c.type === "number" || c.type === "duration") && !c.idLike && distinctCount(frame, c.key) >= 2)
     .sort((a, b) => measureRank(b) - measureRank(a));
   const dimensions = usable
     .filter((c) => c.type === "category")
@@ -47,8 +51,10 @@ export function columnRoles(columns: ColumnMeta[], frame: Frame): ColumnRoles {
         Number(a.digits) - Number(b.digits),
     )
     .map(({ c }) => c);
+  // Yes/no columns group like categories and read well as a share (avg of 1/0).
+  const booleans = usable.filter((c) => c.type === "boolean" && distinctCount(frame, c.key) >= 2);
   const dates = usable.filter((c) => c.type === "date" && distinctCount(frame, c.key) >= 2);
-  return { measures, dimensions, dates };
+  return { measures, dimensions: [...dimensions, ...booleans], dates, booleans };
 }
 
 /** Category columns whose values are all numbers (split dates, codes). */
@@ -67,17 +73,18 @@ function numericLooking(frame: Frame, key: string): boolean {
 
 function measureFor(col: ColumnMeta | undefined): Measure {
   if (!col) return { agg: "count", column: null };
-  return { agg: prefersAverage(col) ? "avg" : "sum", column: col.key };
+  return { agg: averaged(col) ? "avg" : "sum", column: col.key };
 }
 
 export function autoWidgets(columns: ColumnMeta[], frame: Frame): Widget[] {
-  const { measures, dimensions, dates } = columnRoles(columns, frame);
+  const { measures, dimensions, dates, booleans } = columnRoles(columns, frame);
   const widgets: Widget[] = [];
   widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: { agg: "count", column: null } });
   for (const m of measures.slice(0, 3)) widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: measureFor(m) });
   // Fill the 4-column KPI row so it reads as one band.
   const kpiExtras: Measure[] = [];
   if (measures[0] && measureFor(measures[0]).agg === "sum") kpiExtras.push({ agg: "avg", column: measures[0].key });
+  if (booleans[0]) kpiExtras.push({ agg: "avg", column: booleans[0].key });
   if (dimensions[0]) kpiExtras.push({ agg: "distinct", column: dimensions[0].key });
   while (widgets.length < 4 && kpiExtras.length) widgets.push({ id: newId(), kind: "kpi", title: "", span: 1, measure: kpiExtras.shift()! });
   if (widgets.length === 1 || widgets.length === 2) for (const w of widgets) w.span = widgets.length === 1 ? 4 : 2;
@@ -85,8 +92,8 @@ export function autoWidgets(columns: ColumnMeta[], frame: Frame): Widget[] {
   // Charts lead with an amount or quantity, else the first column worth totalling (daily case counts…).
   // Without one, counting rows reads more naturally than averaging measurements.
   // When most numbers are measurements (temperatures, lengths), an unlabeled one likely is too.
-  const mostlyMeasurements = measures.filter(prefersAverage).length >= measures.length / 2;
-  const lead = measures.find((m) => measureRank(m) > 0) ?? (mostlyMeasurements ? undefined : measures.find((m) => !prefersAverage(m)));
+  const mostlyMeasurements = measures.filter(averaged).length >= measures.length / 2;
+  const lead = measures.find((m) => measureRank(m) > 0) ?? (mostlyMeasurements ? undefined : measures.find((m) => !averaged(m)));
   const primary = lead ? measureFor(lead) : ({ agg: "count", column: null } as Measure);
   if (dates[0]) {
     widgets.push({
@@ -229,9 +236,17 @@ export function mergeColumns(
     if (fitsType(prev, raw, i)) return prev;
     const next = infer(h, i);
     if (next.type !== prev.type) retyped.push({ label: prev.label, from: prev.type, to: next.type });
-    // Conversion options belonged to the old type.
-    const { parse: _parse, ...rest } = prev;
-    return { ...rest, type: next.type, inferredType: next.type, format: prev.type === "number" ? prev.format : next.format, dateUnit: next.dateUnit };
+    // Conversion options belonged to the old type; take the ones inferred for the new data.
+    const { parse: _parse, inferredParse: _inferredParse, ...rest } = prev;
+    return {
+      ...rest,
+      type: next.type,
+      inferredType: next.type,
+      format: prev.type === "number" ? prev.format : next.format,
+      dateUnit: next.dateUnit,
+      ...(next.parse ? { parse: next.parse, inferredParse: next.inferredParse } : {}),
+      inferredReason: next.inferredReason,
+    };
   });
   const present = new Set(raw.headers);
   const derived = existing.filter((c) => c.derived);

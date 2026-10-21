@@ -208,7 +208,7 @@ export function ColumnSettings({ raw, frame }: { raw: RawTable; frame: Frame | n
                         ))}
                       </select>
                       {c.type !== c.inferredType && (
-                        <button type="button" className="icon-btn" aria-label="自動判定に戻す" title="自動判定に戻す" onClick={() => patch(c.key, { type: c.inferredType })}>
+                        <button type="button" className="icon-btn" aria-label="自動判定に戻す" title="自動判定に戻す" onClick={() => patch(c.key, { type: c.inferredType, parse: c.inferredParse })}>
                           <ArrowCounterClockwiseIcon size={16} />
                         </button>
                       )}

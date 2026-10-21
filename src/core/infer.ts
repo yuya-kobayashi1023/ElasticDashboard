@@ -1,4 +1,5 @@
-import type { ColumnMeta, ColumnType, NumberFormat, RawCell } from "./types";
+import { parseDateWith, parseDuration, parseTimeOfDay } from "./parsers";
+import type { ColumnMeta, ColumnParse, ColumnType, NumberFormat, RawCell } from "./types";
 
 const NUMBER_RE =
   /^([¥$€£])?\s*([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(%|円|千円|万円|百万円|件|個|人|台|本|回|点|pt|kg|g|km|m|時間|分|秒|日|ヶ月|か月)?$/;
@@ -135,6 +136,10 @@ export interface InferResult {
   idLike: boolean;
   format: NumberFormat;
   dateUnit?: "year";
+  /** Conversion options the inference settled on (date order, unix timestamps…). */
+  parse?: ColumnParse;
+  /** Short Japanese explanation of the guess, shown to the user. */
+  reason: string;
 }
 
 const EMPTY_FORMAT: NumberFormat = { prefix: "", suffix: "", decimals: null };
@@ -156,14 +161,132 @@ function mostCommon(items: string[]): string {
   return best;
 }
 
+
+// ---------- Conservative detection of boolean / time / duration / unix / dd-mm dates ----------
+
+const BOOL_PAIRS: [string, string][] = [
+  ["true", "false"],
+  ["yes", "no"],
+  ["y", "n"],
+  ["t", "f"],
+  ["on", "off"],
+  ["はい", "いいえ"],
+  ["有", "無"],
+  ["あり", "なし"],
+  ["済", "未"],
+  ["○", "×"],
+  ["◯", "×"],
+  ["〇", "×"],
+];
+const BOOL_SINGLES = new Set(["✓", "✔"]);
+/** Header hints that make 1/0 (or a single flag value) a boolean. The is/has prefix is case-sensitive so "island" does not match. */
+const FLAG_PREFIX_RE = /^(?:[Ii]s|[Hh]as|[Cc]an|[Ss]hould|[Ww]as)[_A-Z]/;
+const FLAG_HEADER_RE = /_flag$|flag|フラグ|有無|可否|済み?$/i;
+const TIME_HEADER_RE = /時刻|開始|終了|発生|time|at$|clock|受付/i;
+const DURATION_STRONG_RE = /所要|経過|duration|elapsed|run_?time|長さ|稼働|待ち|通話|lap|タイム/i;
+const DURATION_WEAK_RE = /時間$/;
+const UNIX_HEADER_RE = /timestamp|epoch|unix|_at$|_ts$|time$/i;
+const COLON_VALUE_RE = /^(\d{1,3}):(\d{2})(?::(\d{2}))?$/;
+const MERIDIAN_VALUE_RE = /^(午前|午後)|(am|pm)$/i;
+/** Multi-unit text ("1時間30分", "1h30m") or ISO 8601 ("PT1H30M"); a lone "30分" stays a number with a unit. */
+const UNIT_DURATION_RE = /^(?:\d+(?:\.\d+)?\s*(?:日|時間|分|秒|[dhms])\s*){2,}$|^P(?=\d|T\d)(?:\d+D)?(?:T(?:\d+(?:\.\d+)?[HMS])+)?$/i;
+
+const keyOf = (v: RawCell) => (cellToString(v) ?? "").normalize("NFKC").trim().toLowerCase();
+
+function detectBoolean(header: string, s: RawCell[]): string | null {
+  const h = header.normalize("NFKC").trim();
+  const flagHint = FLAG_PREFIX_RE.test(h) || FLAG_HEADER_RE.test(h);
+  const vals = new Set(s.map(keyOf));
+  if (vals.size > 2) return null;
+  const list = [...vals];
+  if (vals.size === 2) {
+    if (BOOL_PAIRS.some(([t, f]) => vals.has(t) && vals.has(f))) return `値が ${list.join("/")} の2種類`;
+    if (flagHint && vals.has("1") && vals.has("0")) return "列名がフラグで、値が 1/0";
+    return null;
+  }
+  const only = list[0];
+  if (!flagHint) return null;
+  const known = BOOL_PAIRS.some(([t, f]) => only === t || only === f) || BOOL_SINGLES.has(only) || only === "1" || only === "0";
+  return known ? "列名がフラグで、値が真偽の1種類" : null;
+}
+
+function detectTimeOrDuration(header: string, s: RawCell[]): InferResult | null {
+  const h = header.normalize("NFKC").trim();
+  const strings = s.map((v) => (typeof v === "string" ? v.normalize("NFKC").trim() : null));
+  if (strings.some((x) => x === null)) {
+    // Excel fractions of a day are not guessed; only text is.
+    return null;
+  }
+  const texts = strings as string[];
+  const colon = texts.map((x) => COLON_VALUE_RE.exec(x.replace(MERIDIAN_VALUE_RE, "").trim()));
+  const colonShare = colon.filter((m) => m !== null).length / texts.length;
+  const timeHint = TIME_HEADER_RE.test(h);
+  const strongDur = DURATION_STRONG_RE.test(h);
+  const weakDur = DURATION_WEAK_RE.test(h);
+  const mk = (type: "time" | "duration", reason: string): InferResult => ({ type, idLike: false, format: EMPTY_FORMAT, reason });
+  const okShare = (fn: (v: RawCell) => number) => s.filter((v) => !Number.isNaN(fn(v))).length / s.length >= 0.95;
+
+  if (texts.filter((x) => UNIT_DURATION_RE.test(x)).length / texts.length >= 0.95 && okShare((v) => parseDuration(v))) {
+    return mk("duration", "値が 1時間30分 のような長さ");
+  }
+  if (colonShare < 0.95) return null;
+  const hours = colon.map((m) => (m ? +m[1] : NaN)).filter((x) => !Number.isNaN(x));
+  const maxHour = Math.max(...hours);
+  const minHour = Math.min(...hours);
+  const hasSeconds = colon.some((m) => m && m[3] !== undefined);
+  const hasMeridian = texts.some((x) => MERIDIAN_VALUE_RE.test(x));
+  if (maxHour > 23) return okShare((v) => parseDuration(v)) ? mk("duration", "24時間を超える値があり、長さと判断") : null;
+  const durationHinted = strongDur || (weakDur && !timeHint);
+  if (durationHinted) return okShare((v) => parseDuration(v)) ? mk("duration", "列名が経過時間を示し、値が h:mm") : null;
+  if (!okShare((v) => parseTimeOfDay(v))) return null;
+  if (timeHint) return mk("time", "列名が時刻を示し、値が hh:mm");
+  if (hasSeconds || hasMeridian) return mk("time", hasMeridian ? "値が午前/午後付きの時刻" : "値が hh:mm:ss の時刻");
+  // Plain h:mm with no hint: only when the hours look like a clock.
+  return maxHour <= 23 && maxHour >= 1 && minHour >= 0 && hours.some((x) => x >= 1) ? mk("time", "値が時刻の範囲の hh:mm") : null;
+}
+
+/** "03/04/2025" style dates: the order is decided only when some value proves it. */
+function detectAmbiguousDate(s: RawCell[]): { order: "dmy" | "mdy" } | null {
+  const parts = s.map((v) => (typeof v === "string" ? /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(v.normalize("NFKC").trim()) : null));
+  if (parts.some((m) => m === null)) return null;
+  const firstBig = parts.some((m) => +m![1] > 12);
+  const secondBig = parts.some((m) => +m![2] > 12);
+  if (firstBig === secondBig) return null;
+  const order = firstBig ? "dmy" : "mdy";
+  return s.every((v) => !Number.isNaN(parseDateWith(v, { dateFormat: order }))) ? { order } : null;
+}
+
+function detectUnix(header: string, numHits: ParsedNumber[]): "unix-s" | "unix-ms" | null {
+  if (!UNIX_HEADER_RE.test(header.normalize("NFKC").trim())) return null;
+  if (!numHits.every((n) => Number.isInteger(n.value) && !n.prefix && !n.suffix)) return null;
+  const within = (lo: number, hi: number) => numHits.every((n) => n.value >= lo && n.value <= hi);
+  if (within(946684800, 4102444800)) return "unix-s";
+  return within(946684800000, 4102444800000) ? "unix-ms" : null;
+}
+
 export function inferColumn(header: string, values: RawCell[]): InferResult {
   const nonEmpty = values.filter((v) => cellToString(v) !== null);
-  if (nonEmpty.length === 0) return { type: "text", idLike: false, format: EMPTY_FORMAT };
+  if (nonEmpty.length === 0) return { type: "text", idLike: false, format: EMPTY_FORMAT, reason: "値がありません" };
   const s = sample(nonEmpty, 3000);
   const headerIsId = ID_HEADER_RE.test(header.normalize("NFKC").trim());
 
   const dateHits = s.filter((v) => !Number.isNaN(parseDate(v))).length;
-  if (dateHits / s.length >= 0.95) return { type: "date", idLike: false, format: EMPTY_FORMAT };
+  if (dateHits / s.length >= 0.95) return { type: "date", idLike: false, format: EMPTY_FORMAT, reason: "値が日付の形式" };
+
+  const ambiguous = detectAmbiguousDate(s);
+  if (ambiguous) {
+    return {
+      type: "date",
+      idLike: false,
+      format: EMPTY_FORMAT,
+      parse: { dateFormat: ambiguous.order },
+      reason: ambiguous.order === "dmy" ? "日/月/年 の並びと判断" : "月/日/年 の並びと判断",
+    };
+  }
+  const boolReason = detectBoolean(header, s);
+  if (boolReason) return { type: "boolean", idLike: false, format: EMPTY_FORMAT, reason: boolReason };
+  const timeOrDuration = detectTimeOrDuration(header, s);
+  if (timeOrDuration) return timeOrDuration;
 
   const nums = s.map(parseNumberDetailed);
   const numHits = nums.filter((n) => n !== null) as ParsedNumber[];
@@ -175,11 +298,21 @@ export function inferColumn(header: string, values: RawCell[]): InferResult {
     const allInts = numHits.every((n) => Number.isInteger(n.value));
     // Years are time, not amounts: never summed, and usable as the axis of a trend chart.
     const yearLike = allInts && YEAR_HEADER_RE.test(header) && numHits.every((n) => n.value >= 1000 && n.value <= 2100);
-    if (yearLike) return { type: "date", idLike: false, format: EMPTY_FORMAT, dateUnit: "year" };
-    if (allInts && DATEPART_HEADER_RE.test(header.trim()) && numHits.every((n) => n.value >= 0 && n.value <= 60)) {
-      return { type: "category", idLike: false, format: EMPTY_FORMAT };
+    if (yearLike) return { type: "date", idLike: false, format: EMPTY_FORMAT, dateUnit: "year", reason: "列名に年を含み、値が西暦" };
+    const unix = detectUnix(header, numHits);
+    if (unix) {
+      return {
+        type: "date",
+        idLike: false,
+        format: EMPTY_FORMAT,
+        parse: { dateFormat: unix },
+        reason: unix === "unix-s" ? "列名と値の範囲から Unix 秒" : "列名と値の範囲から Unix ミリ秒",
+      };
     }
-    if (CODE_HEADER_RE.test(header)) return { type: "category", idLike: true, format: EMPTY_FORMAT };
+    if (allInts && DATEPART_HEADER_RE.test(header.trim()) && numHits.every((n) => n.value >= 0 && n.value <= 60)) {
+      return { type: "category", idLike: false, format: EMPTY_FORMAT, reason: "日時を分けた列の一部" };
+    }
+    if (CODE_HEADER_RE.test(header)) return { type: "category", idLike: true, format: EMPTY_FORMAT, reason: "列名がコード・フラグ" };
     // Unique integers of one fixed width (≥5 digits, no unit) are codes such as station numbers.
     const fixedWidthCodes =
       unique &&
@@ -187,7 +320,7 @@ export function inferColumn(header: string, values: RawCell[]): InferResult {
       nonEmpty.length >= 50 &&
       numHits.every((n) => !n.prefix && !n.suffix && n.value >= 10000 && String(n.value).length === String(numHits[0].value).length);
     if (headerIsId || fixedWidthCodes || (unique && allInts && isSequential(numHits.map((n) => n.value)))) {
-      return { type: unique ? "text" : "category", idLike: true, format: EMPTY_FORMAT };
+      return { type: unique ? "text" : "category", idLike: true, format: EMPTY_FORMAT, reason: "ID・コードと判断" };
     }
     const prefix = mostCommon(numHits.map((n) => n.prefix));
     const suffix = mostCommon(numHits.map((n) => n.suffix));
@@ -196,16 +329,19 @@ export function inferColumn(header: string, values: RawCell[]): InferResult {
       type: "number",
       idLike: false,
       format: { prefix, suffix, decimals: maxDecimals === 0 ? 0 : null },
+      reason: "値が数値",
     };
   }
 
   const strings = s.map((v) => cellToString(v) ?? "");
   const avgLen = strings.reduce((a, b) => a + b.length, 0) / strings.length;
   if (headerIsId || (unique && avgLen <= 24)) {
-    return { type: unique ? "text" : "category", idLike: true, format: EMPTY_FORMAT };
+    return { type: unique ? "text" : "category", idLike: true, format: EMPTY_FORMAT, reason: "ID・コードと判断" };
   }
   const isCategory = avgLen <= 40 && (distinct <= 50 || (distinct <= 300 && distinct / nonEmpty.length <= 0.3));
-  return { type: isCategory ? "category" : "text", idLike: false, format: EMPTY_FORMAT };
+  return isCategory
+    ? { type: "category", idLike: false, format: EMPTY_FORMAT, reason: "値の種類が少ない" }
+    : { type: "text", idLike: false, format: EMPTY_FORMAT, reason: "値の種類が多い文章" };
 }
 
 function isSequential(values: number[]): boolean {
@@ -234,6 +370,8 @@ export function inferColumns(headers: string[], rows: RawCell[][]): ColumnMeta[]
       idLike: r.idLike,
       format: r.format,
       ...(r.dateUnit ? { dateUnit: r.dateUnit } : {}),
+      ...(r.parse ? { parse: r.parse, inferredParse: r.parse } : {}),
+      inferredReason: r.reason,
     };
   });
 }

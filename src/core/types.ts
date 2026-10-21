@@ -89,6 +89,10 @@ export interface ColumnMeta {
   dateUnit?: "year";
   /** How raw cells are converted; undefined = automatic. */
   parse?: ColumnParse;
+  /** What inference chose for `parse`; "自動判定に戻す" restores it together with the type. */
+  inferredParse?: ColumnParse;
+  /** Short Japanese reason for the inferred type. */
+  inferredReason?: string;
 }
 
 export type Agg = "count" | "sum" | "avg" | "min" | "max" | "distinct";
