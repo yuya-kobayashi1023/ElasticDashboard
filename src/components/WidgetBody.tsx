@@ -52,7 +52,7 @@ export function widgetProblem(w: Widget, frame: Frame): string | null {
     case "time":
       if (!w.dateColumn) return "日付の列がありません";
       if (missing(w.dateColumn)) return missing(w.dateColumn);
-      if (frame.columns.get(w.dateColumn)!.type !== "date") return "日付の列を選んでください";
+      if (!["date", "time"].includes(frame.columns.get(w.dateColumn)!.type)) return "日付・時刻の列を選んでください";
       if (w.series?.length) {
         const bad = w.series.map(missing).find(Boolean);
         if (bad) return bad;

@@ -7,7 +7,7 @@ import type { ColumnMeta, DatePart, DateParts, Derivation, RawTable } from "../c
 import { Dialog } from "./Dialog";
 import { useApp } from "./store";
 
-const PARTS: DatePart[] = ["year", "quarter", "month", "yearmonth", "weekday", "day", "hour"];
+const PARTS: DatePart[] = ["year", "quarter", "month", "yearmonth", "weekday", "day", "hour", "minute"];
 const COMPOSE_FIELDS: { key: keyof DateParts; label: string }[] = [
   { key: "year", label: "年" },
   { key: "month", label: "月" },
@@ -41,6 +41,9 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
   const others = columns.filter((c) => c.key !== editing?.key);
   const numeric = others.filter((c) => c.type === "number" || c.type === "duration");
   const dates = others.filter((c) => c.type === "date");
+  // Time-of-day columns can only give hours and minutes.
+  const timeCols = others.filter((c) => c.type === "time");
+  const sources = part === "hour" || part === "minute" ? [...dates, ...timeCols] : dates;
   const partCandidates = others.filter((c) => c.type === "number" || c.type === "category" || (c.type === "date" && c.dateUnit === "year"));
 
   useEffect(() => {
@@ -51,8 +54,8 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
     setParts(d?.kind === "datecompose" ? d.parts : (suggestDateParts(others) ?? { year: partCandidates[0]?.key ?? "", month: null, day: null, hour: null, minute: null }));
     setName(editing?.label ?? "");
     setExpr(d?.kind === "formula" ? displayFormula(d.expr, columns) : "");
-    setSource(d?.kind === "datepart" ? d.source : (dates[0]?.key ?? ""));
-    setPart(d?.kind === "datepart" ? d.part : "month");
+    setSource(d?.kind === "datepart" ? d.source : (dates[0]?.key ?? timeCols[0]?.key ?? ""));
+    setPart(d?.kind === "datepart" ? d.part : dates.length ? "month" : "hour");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
 
@@ -145,8 +148,8 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
             <button type="button" aria-pressed={kind === "formula"} onClick={() => setKind("formula")}>
               計算式
             </button>
-            <button type="button" aria-pressed={kind === "datepart"} onClick={() => setKind("datepart")} disabled={dates.length === 0}>
-              日付から取り出す
+            <button type="button" aria-pressed={kind === "datepart"} onClick={() => setKind("datepart")} disabled={dates.length === 0 && timeCols.length === 0}>
+              日付・時刻から取り出す
             </button>
             <button type="button" aria-pressed={kind === "datecompose"} onClick={() => setKind("datecompose")} disabled={partCandidates.length === 0}>
               年・月・日から作る
@@ -203,9 +206,9 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
         ) : (
           <div className="field-row">
             <label className="field">
-              <span className="field-label">元の日付列</span>
+              <span className="field-label">元の日付・時刻の列</span>
               <select className="select" value={source} onChange={(e) => setSource(e.target.value)}>
-                {dates.map((c) => (
+                {sources.map((c) => (
                   <option key={c.key} value={c.key}>
                     {c.label}
                   </option>
@@ -214,7 +217,11 @@ export function DerivedDialog({ open, editing, raw, onClose }: Props) {
             </label>
             <label className="field">
               <span className="field-label">取り出す内容</span>
-              <select className="select" value={part} onChange={(e) => setPart(e.target.value as DatePart)}>
+              <select className="select" value={part} onChange={(e) => {
+                  const next = e.target.value as DatePart;
+                  setPart(next);
+                  if (next !== "hour" && next !== "minute" && others.find((c) => c.key === source)?.type === "time") setSource(dates[0]?.key ?? "");
+                }}>
                 {PARTS.map((p) => (
                   <option key={p} value={p}>
                     {DATE_PART_LABEL[p]}

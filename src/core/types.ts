@@ -40,7 +40,7 @@ export interface NumberFormat {
   decimals: number | null;
 }
 
-export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | "day" | "hour";
+export type DatePart = "year" | "quarter" | "month" | "yearmonth" | "weekday" | "day" | "hour" | "minute";
 
 export type Derivation =
   | { kind: "formula"; /** Column references are stored as [key] */ expr: string }
@@ -116,7 +116,7 @@ interface WidgetBase {
   axisTitles?: boolean;
 }
 
-export type CompareBucket = "day" | "week" | "month" | "quarter" | "year";
+export type CompareBucket = "hour" | "day" | "week" | "month" | "quarter" | "year";
 
 export interface KpiCompare {
   dateColumn: string;
@@ -142,7 +142,7 @@ export interface BarWidget extends WidgetBase {
   sort: BarSort;
 }
 
-export type TimeBucket = "auto" | "day" | "week" | "month" | "quarter" | "year";
+export type TimeBucket = "auto" | "second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year";
 
 export interface TimeWidget extends WidgetBase {
   kind: "time";
@@ -205,7 +205,7 @@ export type Filter =
       preset?: DatePreset | null;
     };
 
-export type DatePreset = "last-month" | "last-30" | "last-90" | "latest-year";
+export type DatePreset = "last-24h" | "last-month" | "last-30" | "last-90" | "latest-year";
 
 export interface DataSource {
   fileName: string;

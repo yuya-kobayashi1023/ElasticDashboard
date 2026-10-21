@@ -3,7 +3,7 @@ import type { PeriodComparison, ResolvedBucket } from "../../core/aggregate";
 import { formatDate } from "../../core/format";
 import { linear } from "./util";
 
-const PREV_LABEL: Record<ResolvedBucket, string> = { day: "前日比", week: "前週比", month: "前月比", quarter: "前四半期比", year: "前年比" };
+const PREV_LABEL: Record<ResolvedBucket, string> = { second: "前秒比", minute: "前分比", hour: "前時間比", day: "前日比", week: "前週比", month: "前月比", quarter: "前四半期比", year: "前年比" };
 
 interface Props {
   data: PeriodComparison;

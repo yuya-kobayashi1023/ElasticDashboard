@@ -33,6 +33,9 @@ export const TYPE_SHORT_LABEL: Record<ColumnType, string> = {
 
 export const BUCKET_LABEL: Record<ResolvedBucket | "auto", string> = {
   auto: "自動",
+  second: "秒",
+  minute: "分",
+  hour: "時",
   day: "日",
   week: "週",
   month: "月",
@@ -98,12 +101,20 @@ export function formatNumber(v: number, meta?: ColumnMeta | null, style: "full" 
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-export function formatDate(t: number, bucket: ResolvedBucket | "datetime" = "day"): string {
+/** `timeOnly`: the value is a time of day placed on 1970-01-01, so the date is left out. */
+export function formatDate(t: number, bucket: ResolvedBucket | "datetime" = "day", timeOnly = false): string {
   if (Number.isNaN(t)) return "—";
   const d = new Date(t);
   const y = d.getUTCFullYear();
   const m = d.getUTCMonth() + 1;
+  const date = `${y}/${pad(m)}/${pad(d.getUTCDate())}`;
   switch (bucket) {
+    case "second":
+      return `${timeOnly ? "" : `${date} `}${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    case "minute":
+      return `${timeOnly ? "" : `${date} `}${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+    case "hour":
+      return timeOnly ? `${d.getUTCHours()}時` : `${date} ${d.getUTCHours()}時`;
     case "year":
       return `${y}年`;
     case "quarter":
@@ -190,10 +201,21 @@ export function formatValue(v: number, meta?: ColumnMeta | null, style: "full" |
 }
 
 /** Short axis tick label for a bucket start. */
-export function formatTick(t: number, bucket: ResolvedBucket): string {
+export function formatTick(t: number, bucket: ResolvedBucket, timeOnly = false): string {
   const d = new Date(t);
   const m = d.getUTCMonth() + 1;
   switch (bucket) {
+    case "hour":
+    case "minute":
+    case "second": {
+      const h = d.getUTCHours();
+      const min = d.getUTCMinutes();
+      const sec = d.getUTCSeconds();
+      const clock = `${pad(h)}:${pad(min)}${bucket === "second" ? `:${pad(sec)}` : ""}`;
+      // The first tick of each day carries the date (and drops the leading zero: "1/5 0:00").
+      if (!timeOnly && h === 0 && min === 0 && sec === 0) return `${m}/${d.getUTCDate()} ${clock.slice(1)}`;
+      return clock;
+    }
     case "year":
       return `${d.getUTCFullYear()}`;
     case "quarter":

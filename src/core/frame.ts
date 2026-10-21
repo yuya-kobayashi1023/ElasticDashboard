@@ -81,9 +81,12 @@ function* frameSteps(raw: RawTable, columns: ColumnMeta[], lookups: Lookup[]): S
       } else {
         const src = values.get(d.source);
         if (!src) throw new FormulaError("元の日付列がデータにありません");
-        if (src.type !== "date") throw new FormulaError("元の列が日付ではありません");
+        const timeOfDay = src.type === "time";
+        if (src.type !== "date" && !timeOfDay) throw new FormulaError("元の列が日付ではありません");
+        if (timeOfDay && d.part !== "hour" && d.part !== "minute") throw new FormulaError("時刻の列からは「時」と「分」だけ取り出せます");
         const out: (string | null)[] = new Array(n);
-        for (let i = 0; i < n; i++) out[i] = datePart(src.values[i], d.part);
+        // Time-of-day columns hold seconds since midnight; read them as ms on 1970-01-01.
+        for (let i = 0; i < n; i++) out[i] = datePart(timeOfDay ? src.values[i] * 1000 : src.values[i], d.part);
         values.set(col.key, { type: "category", values: out });
       }
       meta.set(col.key, col);

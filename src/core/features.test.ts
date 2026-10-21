@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { comparePeriods, filterRows, groupBy, pivot, scatterPoints } from "./aggregate";
+import { columnHasTime, comparePeriods, filterRows, floorDate, groupBy, nextBucket, pivot, resolveBucket, scatterPoints, timeSeries } from "./aggregate";
 import { createDashboard, mergeColumns } from "./autoDashboard";
 import { datePart, datePartOrder, displayFormula, FormulaError, parseFormula, toStoredFormula } from "./derive";
-import { formatNumber, measureAxisTitle, setNumberStyle } from "./format";
+import { presetRange } from "./filters";
+import { formatDate, formatNumber, formatTick, measureAxisTitle, setNumberStyle } from "./format";
 import { planExport, renderExportHtml } from "./export";
 import { appendRows, countDuplicateRows, parseExportHtml } from "./exportFormat";
 import { buildFrame } from "./frame";
@@ -364,5 +365,78 @@ describe("number style and axis titles", () => {
     expect(measureAxisTitle({ agg: "sum", column: "a" }, meta)).toBe("売上金額の合計（円）");
     expect(measureAxisTitle({ agg: "avg", column: "t" }, meta)).toBe("気温の平均（℃）");
     expect(measureAxisTitle({ agg: "count", column: null }, meta)).toBe("件数");
+  });
+});
+
+describe("sub-day time units", () => {
+  const t = Date.UTC(2025, 0, 5, 14, 5, 30);
+  const HOUR = 3600000;
+  const col = (key: string, type: ColumnMeta["type"]): ColumnMeta => calc(key, key, undefined, type);
+
+  it("floors and steps hours, minutes and seconds", () => {
+    expect(floorDate(t, "hour")).toBe(Date.UTC(2025, 0, 5, 14));
+    expect(floorDate(t, "minute")).toBe(Date.UTC(2025, 0, 5, 14, 5));
+    expect(floorDate(t, "second")).toBe(t);
+    expect(nextBucket(floorDate(t, "hour"), "hour")).toBe(Date.UTC(2025, 0, 5, 15));
+    expect(nextBucket(floorDate(t, "minute"), "minute")).toBe(Date.UTC(2025, 0, 5, 14, 6));
+    expect(nextBucket(t, "second")).toBe(t + 1000);
+  });
+
+  it("picks an auto unit from the span", () => {
+    expect(resolveBucket("auto", t, t + 90_000)).toBe("second");
+    expect(resolveBucket("auto", t, t + HOUR)).toBe("minute");
+    expect(resolveBucket("auto", t, t + 20 * HOUR)).toBe("hour");
+    expect(resolveBucket("auto", t, t + 10 * 86400000)).toBe("day");
+    expect(resolveBucket("minute", t, t + 10 * 86400000)).toBe("hour");
+  });
+
+  it("never goes below a day for date-only data", () => {
+    const d = Date.UTC(2025, 0, 5);
+    expect(resolveBucket("auto", d, d + 86400000, false)).toBe("day");
+    expect(resolveBucket("hour", d, d + 86400000, false)).toBe("day");
+    const frame = buildFrame({ headers: ["d", "v"], rows: [["2025-01-05", 1], ["2025-01-06", 2]] }, [col("d", "date"), col("v", "number")]);
+    expect(columnHasTime(frame, "d")).toBe(false);
+    const rows = Uint32Array.from([0, 1]);
+    expect(timeSeries(frame, rows, "d", "hour", { agg: "sum", column: "v" }, null).bucket).toBe("day");
+    expect(timeSeries(frame, rows, "d", "auto", { agg: "sum", column: "v" }, null).bucket).toBe("day");
+  });
+
+  it("buckets a time-of-day column by hour", () => {
+    const frame = buildFrame(
+      { headers: ["at", "n"], rows: [["09:10", 1], ["09:50", 1], ["11:00", 1], ["23:59", 1]] },
+      [col("at", "time"), col("n", "number")],
+    );
+    const rows = Uint32Array.from([0, 1, 2, 3]);
+    const r = timeSeries(frame, rows, "at", "day", { agg: "count", column: null }, null);
+    expect(r.timeOfDay).toBe(true);
+    expect(r.bucket).toBe("hour");
+    expect(r.buckets[0]).toBe(9 * HOUR);
+    expect(r.buckets.length).toBe(15);
+    expect(r.series[0].values[0]).toBe(2);
+    expect(r.series[0].values[2]).toBe(1);
+    expect(formatTick(r.buckets[0], r.bucket, true)).toBe("09:00");
+    expect(formatDate(r.buckets[0], r.bucket, true)).toBe("9時");
+  });
+
+  it("derives minutes and hours from date-times and time columns", () => {
+    expect(datePart(t, "minute")).toBe("5分");
+    expect(datePart(t, "hour")).toBe("14時");
+    expect(datePartOrder("minute")?.length).toBe(60);
+    const cols = [col("at", "time"), calc("h", "h", { kind: "datepart", source: "at", part: "hour" }, "category")];
+    const frame = buildFrame({ headers: ["at"], rows: [["09:10"], ["23:59"]] }, cols);
+    expect(frame.columns.get("h")?.values).toEqual(["9時", "23時"]);
+  });
+
+  it("has a last-24h preset counted from the latest value", () => {
+    expect(presetRange("last-24h", t)).toEqual([t - 86400000, t]);
+  });
+
+  it("formats ticks and tooltips", () => {
+    expect(formatTick(Date.UTC(2025, 0, 5, 14), "hour")).toBe("14:00");
+    expect(formatTick(Date.UTC(2025, 0, 5, 0), "hour")).toBe("1/5 0:00");
+    expect(formatTick(Date.UTC(2025, 0, 5, 14, 5), "minute")).toBe("14:05");
+    expect(formatTick(t, "second")).toBe("14:05:30");
+    expect(formatDate(t, "hour")).toBe("2025/01/05 14時");
+    expect(formatDate(t, "minute")).toBe("2025/01/05 14:05");
   });
 });

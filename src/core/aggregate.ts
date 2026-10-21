@@ -188,14 +188,31 @@ export function groupBy(
 }
 
 const DAY = 86400000;
+const HOUR = 3600000;
+const MINUTE = 60000;
+const SECOND = 1000;
 
 export type ResolvedBucket = Exclude<TimeBucket, "auto">;
+
+/** True when any value of a date column is not at midnight (UTC, as dates are stored). */
+export function columnHasTime(frame: Frame, key: string): boolean {
+  const col = frame.columns.get(key);
+  if (!col || col.type !== "date") return col?.type === "time";
+  for (const v of col.values) if (!Number.isNaN(v) && v % DAY !== 0) return true;
+  return false;
+}
 
 export function floorDate(t: number, bucket: ResolvedBucket): number {
   const d = new Date(t);
   const y = d.getUTCFullYear();
   const m = d.getUTCMonth();
   switch (bucket) {
+    case "second":
+      return Math.floor(t / SECOND) * SECOND;
+    case "minute":
+      return Math.floor(t / MINUTE) * MINUTE;
+    case "hour":
+      return Math.floor(t / HOUR) * HOUR;
     case "day":
       return Date.UTC(y, m, d.getUTCDate());
     case "week": {
@@ -215,6 +232,12 @@ export function floorDate(t: number, bucket: ResolvedBucket): number {
 export function nextBucket(t: number, bucket: ResolvedBucket): number {
   const d = new Date(t);
   switch (bucket) {
+    case "second":
+      return t + SECOND;
+    case "minute":
+      return t + MINUTE;
+    case "hour":
+      return t + HOUR;
     case "day":
       return t + DAY;
     case "week":
@@ -228,19 +251,26 @@ export function nextBucket(t: number, bucket: ResolvedBucket): number {
   }
 }
 
-const ORDER: ResolvedBucket[] = ["day", "week", "month", "quarter", "year"];
+const ORDER: ResolvedBucket[] = ["second", "minute", "hour", "day", "week", "month", "quarter", "year"];
+const SUB_DAY: ResolvedBucket[] = ["second", "minute", "hour"];
 
-export function resolveBucket(bucket: TimeBucket, min: number, max: number): ResolvedBucket {
-  const spanDays = (max - min) / DAY;
+/** `hasTime` false (every value at midnight) never yields a sub-day bucket. */
+export function resolveBucket(bucket: TimeBucket, min: number, max: number, hasTime = true): ResolvedBucket {
+  const span = max - min;
+  const spanDays = span / DAY;
   let b: ResolvedBucket;
   if (bucket !== "auto") b = bucket;
+  else if (span <= 2 * MINUTE) b = "second";
+  else if (span <= 2 * HOUR) b = "minute";
+  else if (span <= 3 * DAY) b = "hour";
   else if (spanDays <= 62) b = "day";
   else if (spanDays <= 270) b = "week";
   else if (spanDays <= 365 * 5) b = "month";
   else if (spanDays <= 365 * 12) b = "quarter";
   else b = "year";
+  if (!hasTime && SUB_DAY.includes(b)) b = "day";
   // Keep the point count renderable.
-  const approx: Record<ResolvedBucket, number> = { day: 1, week: 7, month: 30, quarter: 91, year: 365 };
+  const approx: Record<ResolvedBucket, number> = { second: 1 / 86400, minute: 1 / 1440, hour: 1 / 24, day: 1, week: 7, month: 30, quarter: 91, year: 365 };
   while (b !== "year" && spanDays / approx[b] > 1000) b = ORDER[ORDER.indexOf(b) + 1];
   return b;
 }
@@ -252,6 +282,8 @@ export interface Series {
 
 export interface TimeSeriesResult {
   bucket: ResolvedBucket;
+  /** The x axis is a time-of-day column (buckets are ms from 1970-01-01 00:00), so labels show no date. */
+  timeOfDay?: boolean;
   buckets: number[];
   series: Series[];
 }
@@ -267,8 +299,10 @@ export function timeSeries(
   splitKey: string | null,
 ): TimeSeriesResult {
   const dateCol = frame.columns.get(dateKey);
-  if (!dateCol || dateCol.type !== "date") return { bucket: "day", buckets: [], series: [] };
-  const dates = dateCol.values;
+  if (!dateCol || (dateCol.type !== "date" && dateCol.type !== "time")) return { bucket: "day", buckets: [], series: [] };
+  const timeOfDay = dateCol.type === "time";
+  // Seconds since midnight are read as ms on 1970-01-01 so the date bucketing applies unchanged.
+  const dates = timeOfDay ? Float64Array.from(dateCol.values, (v) => v * 1000) : dateCol.values;
   let min = Infinity;
   let max = -Infinity;
   for (const i of rows) {
@@ -278,7 +312,9 @@ export function timeSeries(
     if (t > max) max = t;
   }
   if (min === Infinity) return { bucket: "day", buckets: [], series: [] };
-  const b = resolveBucket(bucket, min, max);
+  // Time-of-day columns have no day or larger units; a day-level choice falls back to hours.
+  const requested: TimeBucket = timeOfDay && bucket !== "second" && bucket !== "minute" ? "hour" : bucket;
+  const b = resolveBucket(requested, min, max, timeOfDay || columnHasTime(frame, dateKey));
   const buckets: number[] = [];
   for (let t = floorDate(min, b); t <= max; t = nextBucket(t, b)) buckets.push(t);
   const bucketIndex = new Map(buckets.map((t, i) => [t, i]));
@@ -312,7 +348,7 @@ export function timeSeries(
     const merged = buckets.map((_, bi) => keys.slice(MAX_SERIES).reduce((a, k) => mergeAcc(a, perSeries.get(k)![bi]), newAcc(measure.agg)));
     series.push({ label: `${OTHER_LABEL} (${keys.length - MAX_SERIES})`, values: merged.map(emptyValue) });
   }
-  return { bucket: b, buckets, series };
+  return { bucket: b, buckets, series, ...(timeOfDay ? { timeOfDay } : {}) };
 }
 
 export interface Bin {
@@ -523,7 +559,8 @@ export function comparePeriods(frame: Frame, rows: Uint32Array, measure: Measure
     current: values[n - 1],
     previous: n > 1 ? values[n - 2] : NaN,
     spark: values.slice(-12),
-    partial: floorDate(maxDate, "day") < lastDayOfBucket,
+    // Sub-day buckets always contain the latest value, so there is no way to tell whether they are complete.
+    partial: SUB_DAY.includes(ts.bucket) ? false : floorDate(maxDate, "day") < lastDayOfBucket,
   };
 }
 
@@ -541,7 +578,7 @@ export function timeSeriesColumns(
   for (const key of columns.slice(0, MAX_SERIES + 1)) {
     const r = timeSeries(frame, rows, dateKey, bucket, { agg: agg === "count" ? "sum" : agg, column: key }, null);
     if (r.series.length === 0) continue;
-    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [] };
+    if (result.buckets.length === 0) result = { bucket: r.bucket, buckets: r.buckets, series: [], ...(r.timeOfDay ? { timeOfDay: true } : {}) };
     result.series.push({ label: label(key), values: r.series[0].values });
   }
   return result;

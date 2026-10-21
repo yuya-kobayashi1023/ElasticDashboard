@@ -16,7 +16,8 @@ import {
   TrashIcon,
 } from "@phosphor-icons/react";
 import { usePalette } from "../components/ThemeScope";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import { columnHasTime } from "../core/aggregate";
 import { defaultWidget } from "../core/autoDashboard";
 import { aggsFor, isContinuousType, isDimensionType } from "../core/columnTypes";
 import { AGG_LABEL, BUCKET_LABEL, TYPE_SHORT_LABEL, widgetTitle } from "../core/format";
@@ -53,6 +54,10 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
   const update = useApp((s) => s.update);
   const widget = dashboard?.widgets.find((w) => w.id === widgetId) ?? null;
   const columns = (dashboard?.columns ?? []).filter((c) => frame.columns.has(c.key));
+  const axisKey = widget?.kind === "time" ? widget.dateColumn : widget?.kind === "kpi" ? (widget.compare?.dateColumn ?? null) : null;
+  const isTimeOfDay = !!axisKey && frame.columns.get(axisKey)?.type === "time";
+  // Sub-day units need a time part in the data; date-only columns are aggregated by day.
+  const noTimePart = useMemo(() => !!axisKey && !columnHasTime(frame, axisKey), [frame, axisKey]);
 
   const set = (patch: Partial<Widget>, coalesce?: string) => {
     if (!widget) return;
@@ -127,7 +132,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
           {widget.kind === "kpi" && (
             <>
               <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
-              <CompareFields widget={widget} columns={columns} onChange={(compare) => set({ compare })} />
+              <CompareFields widget={widget} columns={columns} noTimePart={noTimePart} onChange={(compare) => set({ compare })} />
             </>
           )}
 
@@ -166,11 +171,16 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
           {widget.kind === "time" && (
             <>
               <div className="field-row">
-                <ColumnSelect label="日付の列" value={widget.dateColumn} columns={columns.filter((c) => c.type === "date")} onChange={(dateColumn) => set({ dateColumn })} />
+                <ColumnSelect
+                  label="日付・時刻の列"
+                  value={widget.dateColumn}
+                  columns={columns.filter((c) => c.type === "date" || c.type === "time")}
+                  onChange={(dateColumn) => set({ dateColumn, ...(columns.find((c) => c.key === dateColumn)?.type === "time" && !["auto", "minute", "second", "hour"].includes(widget.bucket) ? { bucket: "hour" } : {}) })}
+                />
                 <label className="field">
                   <span className="field-label">集計の単位</span>
                   <select className="select" value={widget.bucket} onChange={(e) => set({ bucket: e.target.value as TimeBucket })}>
-                    {(["auto", "day", "week", "month", "quarter", "year"] as const).map((b) => (
+                    {(isTimeOfDay ? (["auto", "second", "minute", "hour"] as const) : (["auto", "second", "minute", "hour", "day", "week", "month", "quarter", "year"] as const)).map((b) => (
                       <option key={b} value={b}>
                         {BUCKET_LABEL[b]}
                       </option>
@@ -178,6 +188,7 @@ export function WidgetEditor({ widgetId, frame, onClose }: Props) {
                   </select>
                 </label>
               </div>
+              {noTimePart && ["second", "minute", "hour"].includes(widget.bucket) && <span className="field-hint">この列には時刻が含まれていないため、日単位で集計します</span>}
               <MeasureFields measure={widget.measure} columns={columns} onChange={(measure) => set({ measure })} />
               <label className="field">
                 <span className="field-label">系列</span>
@@ -532,6 +543,7 @@ function ColorField({ value, onChange }: { value: number; onChange: (i: number) 
 }
 
 const COMPARE_BUCKETS: [CompareBucket, string][] = [
+  ["hour", "時"],
   ["day", "日"],
   ["week", "週"],
   ["month", "月"],
@@ -539,7 +551,7 @@ const COMPARE_BUCKETS: [CompareBucket, string][] = [
   ["year", "年"],
 ];
 
-function CompareFields({ widget, columns, onChange }: { widget: KpiWidget; columns: ColumnMeta[]; onChange: (c: KpiWidget["compare"]) => void }) {
+function CompareFields({ widget, columns, noTimePart, onChange }: { widget: KpiWidget; columns: ColumnMeta[]; noTimePart: boolean; onChange: (c: KpiWidget["compare"]) => void }) {
   const dates = columns.filter((c) => c.type === "date");
   const cmp = widget.compare ?? null;
   return (
@@ -570,6 +582,7 @@ function CompareFields({ widget, columns, onChange }: { widget: KpiWidget; colum
               </select>
             </label>
           </div>
+          {noTimePart && cmp.bucket === "hour" && <span className="field-hint">この列には時刻が含まれていないため、日単位で集計します</span>}
           <label className="checkbox">
             <input type="checkbox" checked={cmp.upIsGood} onChange={(e) => onChange({ ...cmp, upIsGood: e.target.checked })} />
             増えるほど良い指標（オフにすると、減少を良い変化として色付けします）

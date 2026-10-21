@@ -30,7 +30,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
   // Keep a landscape aspect in narrow windows.
   const height = fixedHeight ?? (width > 0 ? Math.min(autoHeight, Math.max(200, Math.round(width * 0.45))) : autoHeight);
   const [hover, setHover] = useState<number | null>(null);
-  const { buckets, series, bucket } = data;
+  const { buckets, series, bucket, timeOfDay } = data;
   const seriesColor = (label: string, i: number): string =>
     label.startsWith("その他") ? OTHER_COLOR : series.length === 1 && color ? color : SERIES_COLORS[i % SERIES_COLORS.length];
   const n = buckets.length;
@@ -77,7 +77,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
   const xCenter = (i: number) => (useColumns ? left + band * (i + 0.5) : n === 1 ? left + innerW / 2 : left + (innerW * i) / (n - 1));
   const colW = Math.max(1, Math.min(24, band * (series.length > 1 && !stacked ? 0.8 / series.length : 0.7)));
 
-  const maxLabels = Math.max(2, Math.floor(innerW / Math.max(56, textWidth(formatTick(buckets[0] ?? 0, bucket), fs) + 16)));
+  const maxLabels = Math.max(2, Math.floor(innerW / Math.max(56, textWidth(formatTick(buckets[0] ?? 0, bucket, timeOfDay), fs) + 16)));
   const tickEvery = Math.max(1, Math.ceil(n / maxLabels));
 
   const onMove = (clientX: number, rectLeft: number) => {
@@ -155,7 +155,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
             {buckets.map((t, i) =>
               i % tickEvery === 0 ? (
                 <text key={t} x={xCenter(i)} y={height - 8} textAnchor="middle">
-                  {formatTick(t, bucket)}
+                  {formatTick(t, bucket, timeOfDay)}
                 </text>
               ) : null,
             )}
@@ -250,7 +250,7 @@ export function TimeChart({ data, mark, stackable, format, formatAxis, height: f
         )}
         {hover !== null && buckets[hover] !== undefined && (
           <div className="chart-tooltip" style={{ left: clampTooltip(xCenter(hover), width), top }} role="status">
-            <div className="tt-title">{formatDate(buckets[hover], bucket)}</div>
+            <div className="tt-title">{formatDate(buckets[hover], bucket, timeOfDay)}</div>
             {hoverRows.length === 0 && <div className="muted">データなし</div>}
             {[...hoverRows]
               .sort((a, b) => b.value - a.value)
