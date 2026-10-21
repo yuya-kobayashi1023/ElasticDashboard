@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/src/generated/**)",
+      "Read(/dist/**)",
+      "Read(/bun.lock)",
+      "Read(/.playwright-mcp/**)"
+    ],
+    "allow": [
+      "Bash(bun run test*)",
+      "Bash(bun run typecheck*)",
+      "Bash(bun run codemap*)",
+      "Bash(bun run build*)",
+      "Bash(bunx vitest *)",
+      "Bash(bunx tsc *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bun scripts/codemap.ts >/dev/null 2>&1 || true",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
