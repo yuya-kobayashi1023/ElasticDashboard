@@ -117,6 +117,8 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
     // In-chart labels use the compact number style; durations stay in full ("1時間23分") because compact would round them.
     const isDuration = (m: Parameters<typeof formatMeasure>[1]) => !!m.column && m.agg !== "count" && m.agg !== "distinct" && frame.meta.get(m.column)?.type === "duration";
     const fmtLabel = (m: Parameters<typeof formatMeasure>[1]) => (isDuration(m) ? fmt(m) : fmtAxis(m));
+    // The KPI target is compacted like the headline value (from 1e8 up), so "¥259.3M" is not paired with "¥300,000,000".
+    const targetFmt = (m: Parameters<typeof formatMeasure>[1], v: number, target: number) => (Math.abs(v) >= 1e8 || Math.abs(target) >= 1e8 ? fmtAxis(m) : fmt(m));
     const titles = w.axisTitles !== false;
     const color = `var(--series-${(w.color ?? 0) + 1})`;
     const additive = (m: { agg: string }) => m.agg === "count" || m.agg === "sum";
@@ -128,7 +130,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
           return (
             <>
               <KpiCompare data={cmp} format={fmt(w.measure)} upIsGood={w.compare.upIsGood} color={color} showSparkline={w.showSparkline !== false} />
-              {typeof w.target === "number" && <KpiTarget value={cmp.current} target={w.target} format={fmt(w.measure)} color={color} />}
+              {typeof w.target === "number" && <KpiTarget value={cmp.current} target={w.target} format={targetFmt(w.measure, cmp.current, w.target)} color={color} />}
             </>
           );
         }
@@ -137,7 +139,7 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         return (
           <>
             <div className="kpi-value">{formatMeasure(v, w.measure, frame.meta, big ? "compact" : "full", nf)}</div>
-            {typeof w.target === "number" && <KpiTarget value={v} target={w.target} format={fmt(w.measure)} color={color} />}
+            {typeof w.target === "number" && <KpiTarget value={v} target={w.target} format={targetFmt(w.measure, v, w.target)} color={color} />}
           </>
         );
       }

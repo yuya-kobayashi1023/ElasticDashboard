@@ -15,9 +15,16 @@ export interface DashboardData {
   computing: boolean;
 }
 
-/** Coerces raw data once per column-type change; renames and visibility only refresh metadata. */
+/** Everything that changes how a column's values are converted; labels, visibility and number format are left out on purpose. */
+export function frameKey(columns: ColumnMeta[]): string {
+  return columns
+    .map((c) => [c.key, c.type, c.parse ? JSON.stringify(c.parse) : "", c.dateUnit ?? "", c.derived ? JSON.stringify(c.derived) : ""].join("\u0000"))
+    .join("\u0001");
+}
+
+/** Coerces raw data once per conversion change (type, parse, date unit); renames and visibility only refresh metadata. */
 export function useDashboardData(raw: RawTable, columns: ColumnMeta[], filters: Filter[], lookups?: Lookup[]): DashboardData {
-  const typeKey = columns.map((c) => `${c.key}\u0000${c.type}\u0000${c.derived ? JSON.stringify(c.derived) : ""}`).join("\u0001");
+  const typeKey = frameKey(columns);
   const large = raw.rows.length >= LARGE;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
