@@ -178,7 +178,16 @@ export interface TableWidget extends WidgetBase {
   kind: "table";
   /** null = every visible column */
   columns: string[] | null;
+  /** Full column order including unchecked columns. Without it, `columns` (then column-settings order) decides. */
+  order?: string[];
   pageSize: number;
+  /** Initial sort; header clicks in the viewer stay local. */
+  sort?: { key: string; dir: 1 | -1 } | null;
+  /** Per-column filter row (default on). */
+  filterRow?: boolean;
+  rowNumbers?: boolean;
+  /** Wrap long cell text instead of truncating. */
+  wrap?: boolean;
 }
 
 export type Widget = KpiWidget | BarWidget | TimeWidget | HistogramWidget | ScatterWidget | PivotWidget | TableWidget;

@@ -10,6 +10,7 @@ import { KpiCompare } from "./charts/KpiCompare";
 import { PivotTable } from "./charts/PivotTable";
 import { ScatterChart } from "./charts/ScatterChart";
 import { TimeChart } from "./charts/TimeChart";
+import { orderedTableKeys } from "../core/tableFilter";
 import { DataTable } from "./DataTable";
 import { useNumberStyle } from "./ThemeScope";
 
@@ -173,8 +174,23 @@ export function WidgetBody({ widget: w, frame, rows, filters, onToggleValue, onF
         );
       }
       case "table": {
-        const cols = (w.columns ?? [...frame.meta.keys()]).map((k) => frame.meta.get(k)).filter((c) => c && !c.hidden && frame.columns.has(c.key));
-        return <DataTable frame={frame} rows={rows} columns={cols as NonNullable<(typeof cols)[number]>[]} pageSize={w.pageSize} />;
+        const avail = [...frame.meta.values()].filter((c) => !c.hidden && frame.columns.has(c.key)).map((c) => c.key);
+        const shown = w.columns ? new Set(w.columns) : null;
+        const cols = orderedTableKeys(w, avail)
+          .filter((k) => !shown || shown.has(k))
+          .map((k) => frame.meta.get(k)!);
+        return (
+          <DataTable
+            frame={frame}
+            rows={rows}
+            columns={cols}
+            pageSize={w.pageSize}
+            initialSort={w.sort ?? null}
+            filterRow={w.filterRow !== false}
+            rowNumbers={!!w.rowNumbers}
+            wrap={!!w.wrap}
+          />
+        );
       }
     }
   }, [w, frame, rows, filters, onToggleValue, problem, numberStyle]);
